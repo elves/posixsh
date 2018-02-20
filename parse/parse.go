@@ -209,9 +209,12 @@ func findTildePrefix(s string) string {
 // Primary = Bareword
 type Primary struct {
 	node
-	Type     PrimaryType
-	Value    string // Actual value after escape.
-	Variable *Variable
+	Type PrimaryType
+	// String value after processing. Valid for BarewordPrimary and
+	// SingleQuotedPrimary.
+	Value      string
+	Variable   *Variable
+	DQSegments []*DQSegment
 }
 
 type PrimaryType int
@@ -221,6 +224,7 @@ const (
 	BarewordPrimary
 	VariablePrimary
 	SingleQuotedPrimary
+	DoubleQuotedPrimary
 )
 
 var (
@@ -282,6 +286,63 @@ start:
 		p.skipInvalid()
 		fmt.Println("skipped one char, restart primary")
 		goto start
+	}
+}
+
+type DQSegment struct {
+	Type      DQSegmentType
+	Value     string
+	Expansion *Primary
+}
+
+type DQSegmentType int
+
+const (
+	DQInvalidSegment DQSegmentType = iota
+	DQStringSegment
+	DQExpansionSegment
+)
+
+var (
+	dqStringSegmentStopper    = "$`\""
+	rawDQStringSegmentStopper = dqStringSegmentStopper + "\\"
+)
+
+func (dq *DQSegment) parseInner(p *parser) {
+	if p.hasPrefixIn("$", "`") != "" {
+		p.parseInto(&dq.Expansion, &Primary{})
+	} else {
+		// Optimization: Consume a prefix that does not contain backslashes.
+		// This avoid building a bytes.Buffer when this segment is free of
+		// backslashes.
+		raw := p.consumeWhileNotIn(rawDQStringSegmentStopper)
+		if !p.hasPrefix("\\") {
+			dq.Value = raw
+			return
+		}
+		buf := bytes.NewBufferString(raw)
+		lastBackslash := false
+		p.consumeWhile(func(r rune) bool {
+			if lastBackslash {
+				if !runeIn(r, "$`\"\\") {
+					// \ is preserved, except in \$ \` \" \\. Line continuation
+					// is handled on the parser level.
+					buf.WriteRune('\\')
+				}
+				buf.WriteRune(r)
+				lastBackslash = false
+				return true
+			} else if r == '\\' {
+				lastBackslash = true
+				return true
+			} else if runeIn(r, "$`\"") {
+				return false
+			} else {
+				buf.WriteRune(r)
+				return true
+			}
+		})
+		dq.Value = buf.String()
 	}
 }
 
