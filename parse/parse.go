@@ -277,6 +277,11 @@ start:
 		if !p.consumePrefix("'") {
 			p.errorf("unterminated single-quoted string")
 		}
+	case p.consumePrefix(`"`):
+		pr.Type = DoubleQuotedPrimary
+		for !p.consumePrefix(`"`) {
+			p.parseInto(&pr.DQSegments, &DQSegment{})
+		}
 	case p.consumePrefix("$"):
 		pr.Type = VariablePrimary
 		p.parseInto(&pr.Variable, &Variable{})
@@ -290,6 +295,7 @@ start:
 }
 
 type DQSegment struct {
+	node
 	Type      DQSegmentType
 	Value     string
 	Expansion *Primary
@@ -324,9 +330,7 @@ func (dq *DQSegment) parseInner(p *parser) {
 		lastBackslash := false
 		p.consumeWhile(func(r rune) bool {
 			if lastBackslash {
-				if !runeIn(r, "$`\"\\") {
-					// \ is preserved, except in \$ \` \" \\. Line continuation
-					// is handled on the parser level.
+				if !runeIn(r, rawDQStringSegmentStopper) {
 					buf.WriteRune('\\')
 				}
 				buf.WriteRune(r)
@@ -335,7 +339,7 @@ func (dq *DQSegment) parseInner(p *parser) {
 			} else if r == '\\' {
 				lastBackslash = true
 				return true
-			} else if runeIn(r, "$`\"") {
+			} else if runeIn(r, dqStringSegmentStopper) {
 				return false
 			} else {
 				buf.WriteRune(r)
