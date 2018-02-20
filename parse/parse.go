@@ -2,6 +2,7 @@
 package parse
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,6 +22,8 @@ type Chunk struct {
 	node
 	Pipelines []*Pipeline
 }
+
+var commandStopper = " \t\r\n;()}&|"
 
 // Chunk = w { Pipeline w }
 func (ch *Chunk) parseInner(p *parser) {
@@ -106,7 +109,7 @@ const (
 
 func (rd *Redir) parseInner(p *parser) {
 	p.whitespaces()
-	left := p.consumeSet(digitSet)
+	left := p.consumeWhileIn(digitSet)
 	if left == "" {
 		rd.Left = -1
 	} else {
@@ -173,6 +176,8 @@ type Compound struct {
 	Parts       []*Primary
 }
 
+var exprStopper = commandStopper + "<>"
+
 func (cp *Compound) parseInner(p *parser) {
 	// TODO: Parse TildePrefix correctly in assignment RHS
 	if prefix := findTildePrefix(p.rest()); prefix != "" {
@@ -205,7 +210,7 @@ func findTildePrefix(s string) string {
 type Primary struct {
 	node
 	Type     PrimaryType
-	Value    string
+	Value    string // Actual value after escape.
 	Variable *Variable
 }
 
@@ -218,16 +223,47 @@ const (
 	SingleQuotedPrimary
 )
 
+var (
+	barewordStopper    = exprStopper + "[]{\"'$*?"
+	rawBarewordStopper = barewordStopper + "\\"
+)
+
 func (pr *Primary) parseInner(p *parser) {
 start:
 	switch {
 	case p.nextInCompl(barewordStopper):
 		pr.Type = BarewordPrimary
-		pr.Value = p.consumeComplSet(barewordStopper)
+		// Optimization: Consume a prefix that does not contain backslashes.
+		// This avoid building a bytes.Buffer when the bareword is free of
+		// backslashes.
+		raw := p.consumeWhileNotIn(rawBarewordStopper)
+		if !p.hasPrefix("\\") {
+			// One of barewordStopper runes or EOF was encounterd.
+			pr.Value = raw
+			return
+		}
+		buf := bytes.NewBufferString(raw)
+		lastBackslash := false
+		p.consumeWhile(func(r rune) bool {
+			if lastBackslash {
+				buf.WriteRune(r)
+				lastBackslash = false
+				return true
+			} else if r == '\\' {
+				lastBackslash = true
+				return true
+			} else if runeIn(r, barewordStopper) {
+				return false
+			} else {
+				buf.WriteRune(r)
+				return true
+			}
+		})
+		pr.Value = buf.String()
 	case p.consumePrefix("'"):
 		pr.Type = SingleQuotedPrimary
 		begin := p.pos
-		_ = p.consumeComplSet("'")
+		_ = p.consumeWhileNotIn("'")
 		end := p.pos
 		// recoverPos returns a postion after all line continuations. When the
 		// single-quoted string has leading line continuations, those will be
@@ -272,7 +308,7 @@ func (va *Variable) parseInner(p *parser) {
 	if p.consumePrefix("#") {
 		// We have seen "${#". It can either be the variable $# or the string
 		// length operator, depending on what comes next.
-		if p.startsWithOneOf("-}", "?}", "=}", "+}") != "" {
+		if p.hasPrefixIn("-}", "?}", "=}", "+}") != "" {
 			// This is ambiguous, but POSIX prefers # to be parsed as the string
 			// length operator. Note that since $=
 			// and $+ are not valid variable names this will eventually result
@@ -280,7 +316,7 @@ func (va *Variable) parseInner(p *parser) {
 			va.LengthOp = true
 			va.Name = p.consume(1)
 			// va.Name = parseVariableName(p, true)
-		} else if p.startsWithOneOf("=}", "+}") != "" {
+		} else if p.hasPrefixIn("=}", "+}") != "" {
 			// According to POSIX, "${#=}" and "${#+}" should also parse the #
 			// as the string length operator. However, since $= and $+ are not
 			// valid variable names, this will result in an error. Parsing them
@@ -289,7 +325,7 @@ func (va *Variable) parseInner(p *parser) {
 			// treat them as ${#}.
 			p.errorf("invalid parameter substitution ${#%s}, treating as ${#}", p.consume(1))
 			va.Name = "#"
-		} else if p.startsWith("}") || p.startsWithOneOf(modifierOps...) != "" {
+		} else if p.hasPrefix("}") || p.hasPrefixIn(modifierOps...) != "" {
 			va.Name = "#"
 		} else {
 			va.LengthOp = true
@@ -298,20 +334,22 @@ func (va *Variable) parseInner(p *parser) {
 	} else {
 		va.Name = parseVariableName(p, true)
 	}
-	if p.startsWithCompl("}") {
+	if p.hasPrefixNot("}") {
 		p.parseInto(&va.Modifiers, &Modifier{})
 	}
-	p.mustConsumePrefix("}")
+	if !p.consumePrefix("}") {
+		p.errorf("missing } to match {")
+	}
 	return
 }
 
 func parseVariableName(p *parser, brace bool) string {
-	if name := p.consumeOneOfSet(specialVariableSet); name != "" {
+	if name := p.consumeRuneIn(specialVariableSet); name != "" {
 		// Name may be one of the special variables. In that case, the name
 		// is always just one character. For instance, $$x is the same as $$"x",
 		// and ${$x} is invalid.
 		return name
-	} else if name0 := p.consumeOneOfSet(digitSet); name0 != "" {
+	} else if name0 := p.consumeRuneIn(digitSet); name0 != "" {
 		// Name starts with a digit. If the variable is braced, the name can be
 		// a run of digits; otherwise the name is one digit. For instance, $0x
 		// is the same as $0"x", and ${0x} is invalid; $01 is the same as $0"1",
@@ -319,8 +357,8 @@ func parseVariableName(p *parser, brace bool) string {
 		if !brace {
 			return name0
 		}
-		return name + p.consumeSet(digitSet)
-	} else if name := p.consumeSet(nameSet); name != "" {
+		return name + p.consumeWhileIn(digitSet)
+	} else if name := p.consumeWhileIn(nameSet); name != "" {
 		// Parse an ordinary variable name, a run of characters in nameSet and
 		// not starting with a digit. We already know that the name won't start
 		// with a digit because that case is handled by the previous branch.
@@ -342,7 +380,7 @@ var modifierOps = []string{
 }
 
 func (md *Modifier) parseInner(p *parser) {
-	md.Operator = p.consumeOneOf(modifierOps...)
+	md.Operator = p.consumePrefixIn(modifierOps...)
 	if md.Operator == "" {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
@@ -351,12 +389,6 @@ func (md *Modifier) parseInner(p *parser) {
 }
 
 // Lookahead.
-
-var (
-	commandStopper  = " \t\r\n;()}&|"
-	exprStopper     = commandStopper + "<>"
-	barewordStopper = exprStopper + `[]{"'$*?`
-)
 
 func (p *parser) mayParseCommand() bool {
 	return p.nextInCompl(commandStopper)

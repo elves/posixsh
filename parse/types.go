@@ -88,26 +88,25 @@ func (p *parser) consumeWhile(f func(r rune) bool) string {
 	return p.consume(len(p.rest()))
 }
 
-func (p *parser) consumeSet(set string) string {
+func (p *parser) consumeWhileIn(set string) string {
 	return p.consumeWhile(func(r rune) bool { return runeIn(r, set) })
 }
 
-func (p *parser) consumeComplSet(set string) string {
+func (p *parser) consumeWhileNotIn(set string) string {
 	return p.consumeWhile(func(r rune) bool { return !runeIn(r, set) })
 }
 
-func (p *parser) startsWith(prefix string) bool {
-	return strings.HasPrefix(p.rest(), prefix)
+func (p *parser) hasPrefix(prefix string) bool {
+	return hasPrefix(p.rest(), prefix)
 }
 
-func (p *parser) startsWithCompl(prefix string) bool {
-	return p.rest() != "" && !strings.HasPrefix(p.rest(), prefix)
+func (p *parser) hasPrefixNot(prefix string) bool {
+	return p.rest() != "" && !hasPrefix(p.rest(), prefix)
 }
 
-func (p *parser) startsWithOneOf(prefixes ...string) string {
-	rest := p.rest()
+func (p *parser) hasPrefixIn(prefixes ...string) string {
 	for _, prefix := range prefixes {
-		if strings.HasPrefix(rest, prefix) {
+		if p.hasPrefix(prefix) {
 			return prefix
 		}
 	}
@@ -115,31 +114,17 @@ func (p *parser) startsWithOneOf(prefixes ...string) string {
 }
 
 func (p *parser) consumePrefix(prefix string) bool {
-	return p.consumeOneOf(prefix) == prefix
+	return p.consumePrefixIn(prefix) == prefix
 }
 
-func (p *parser) mustConsumePrefix(prefix string) {
-	if !p.consumePrefix(prefix) {
-		p.errorf("missing %q", prefix)
-	}
-}
-
-func (p *parser) consumeOneOf(prefixes ...string) string {
-	prefix := p.startsWithOneOf(prefixes...)
+func (p *parser) consumePrefixIn(prefixes ...string) string {
+	prefix := p.hasPrefixIn(prefixes...)
 	p.consume(len(prefix))
 	return prefix
 }
 
-func (p *parser) consumeOneOfSet(set string) string {
-	rest := p.rest()
-	for _, r := range set {
-		prefix := string(r)
-		if strings.HasPrefix(rest, prefix) {
-			p.consume(len(prefix))
-			return prefix
-		}
-	}
-	return ""
+func (p *parser) consumeRuneIn(set string) string {
+	return p.consumePrefixIn(strings.Split(set, "")...)
 }
 
 func (p *parser) skipInvalid() {
@@ -195,7 +180,7 @@ func (p *parser) meta(meta string) {
 }
 
 func (p *parser) maybeMeta(meta string) bool {
-	if strings.HasPrefix(p.rest(), meta) {
+	if p.hasPrefix(meta) {
 		p.meta(meta)
 		return true
 	}
@@ -279,7 +264,7 @@ type Meta struct {
 }
 
 func (mt *Meta) parseInner(p *parser) {
-	if strings.HasPrefix(p.rest(), mt.meta) {
+	if p.hasPrefix(mt.meta) {
 		p.consume(len(mt.meta))
 	} else {
 		p.errorf("missing meta symbol %q", mt.meta)
