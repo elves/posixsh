@@ -20,6 +20,96 @@ func newParser(text string) *parser {
 	return &parser{text: text}
 }
 
+func (p *parser) rest() string {
+	return p.text[p.pos:]
+}
+
+func (p *parser) eof() bool {
+	return p.rest() == ""
+}
+
+func (p *parser) errorf(format string, a ...interface{}) {
+	p.err.Errors = append(p.err.Errors,
+		ErrorEntry{p.pos, fmt.Sprintf(format, a...)})
+}
+
+func (p *parser) consume(i int) string {
+	consumed := p.rest()[:i]
+	p.pos += i
+	return consumed
+}
+
+func (p *parser) consumeWhile(f func(r rune) bool) string {
+	for i, r := range p.rest() {
+		if !f(r) {
+			return p.consume(i)
+		}
+	}
+	return p.consume(len(p.rest()))
+}
+
+func (p *parser) consumeSet(set string) string {
+	return p.consumeWhile(func(r rune) bool { return runeIn(r, set) })
+}
+
+func (p *parser) consumeComplSet(set string) string {
+	return p.consumeWhile(func(r rune) bool { return !runeIn(r, set) })
+}
+
+func (p *parser) startsWith(prefix string) bool {
+	return strings.HasPrefix(p.rest(), prefix)
+}
+
+func (p *parser) startsWithCompl(prefix string) bool {
+	return p.rest() != "" && !strings.HasPrefix(p.rest(), prefix)
+}
+
+func (p *parser) startsWithOneOf(prefixes ...string) string {
+	rest := p.rest()
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(rest, prefix) {
+			return prefix
+		}
+	}
+	return ""
+}
+
+func (p *parser) consumePrefix(prefix string) bool {
+	return p.consumeOneOf(prefix) == prefix
+}
+
+func (p *parser) mustConsumePrefix(prefix string) {
+	if !p.consumePrefix(prefix) {
+		p.errorf("missing %q", prefix)
+	}
+}
+
+func (p *parser) consumeOneOf(prefixes ...string) string {
+	prefix := p.startsWithOneOf(prefixes...)
+	p.consume(len(prefix))
+	return prefix
+}
+
+func (p *parser) consumeOneOfSet(set string) string {
+	rest := p.rest()
+	for _, r := range set {
+		prefix := string(r)
+		if strings.HasPrefix(rest, prefix) {
+			p.consume(len(prefix))
+			return prefix
+		}
+	}
+	return ""
+}
+
+func (p *parser) skipInvalid() {
+	r, size := utf8.DecodeRuneInString(p.rest())
+	p.errorf("skipped invalid rune %q", r)
+	p.consume(size)
+}
+
+// Common parsing logic.
+
 func (p *parser) parse(n Node) {
 	fmt.Printf("parse %T, pos %d\n", n, p.pos)
 
@@ -50,49 +140,7 @@ func (p *parser) parseInto(ptr interface{}, n Node) {
 	}
 }
 
-func (p *parser) errorf(format string, a ...interface{}) {
-	p.err.Errors = append(p.err.Errors,
-		ErrorEntry{p.pos, fmt.Sprintf(format, a...)})
-}
-
-func (p *parser) rest() string {
-	return p.text[p.pos:]
-}
-
-func (p *parser) advance(i int) {
-	p.pos += i
-}
-
-func (p *parser) skipInvalid() {
-	r, size := utf8.DecodeRuneInString(p.rest())
-	p.errorf("skipped invalid rune %q", r)
-	p.advance(size)
-}
-
-func (p *parser) advanceUntil(newRest string) string {
-	rest := p.rest()
-	consumed := rest[:len(rest)-len(newRest)]
-	p.advance(len(consumed))
-	return consumed
-}
-
-func (p *parser) consumeSet(set string) string {
-	return p.advanceUntil(strings.TrimLeft(p.rest(), set))
-}
-
-func (p *parser) consumeFunc(f func(r rune) bool) string {
-	return p.advanceUntil(strings.TrimLeftFunc(p.rest(), f))
-}
-
-func (p *parser) maybeConsume(prefix string) bool {
-	if strings.HasPrefix(p.rest(), prefix) {
-		p.advance(len(prefix))
-		return true
-	}
-	return false
-}
-
-// Shorthands for parsing whitespace nodes.
+// Shorthands for .parse calls.
 
 func (p *parser) inlineWhitespaces() {
 	p.parse(&Whitespaces{set: inlineWhitespaceSet})
@@ -175,7 +223,7 @@ type Whitespaces struct {
 
 func (ws *Whitespaces) parseInner(p *parser) {
 	comment := false
-	p.consumeFunc(func(r rune) bool {
+	p.consumeWhile(func(r rune) bool {
 		if r == '#' {
 			comment = true
 		} else if r == '\n' {
@@ -192,7 +240,7 @@ type Meta struct {
 
 func (mt *Meta) parseInner(p *parser) {
 	if strings.HasPrefix(p.rest(), mt.meta) {
-		p.advance(len(mt.meta))
+		p.consume(len(mt.meta))
 	} else {
 		p.errorf("missing meta symbol %q", mt.meta)
 	}

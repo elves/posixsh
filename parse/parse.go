@@ -106,7 +106,7 @@ const (
 
 func (rd *Redir) parseInner(p *parser) {
 	p.whitespaces()
-	left := p.advanceUntil(strings.TrimLeft(p.rest(), digitSet))
+	left := p.consumeSet(digitSet)
 	if left == "" {
 		rd.Left = -1
 	} else {
@@ -166,67 +166,189 @@ func (cc *CompoundCommand) parseInner(p *parser) {
 	}
 }
 
-// Compound = { Primary }
+// Compound = [ TildePrefix ] { Primary }
 type Compound struct {
 	node
-	Parts []*Primary
+	TildePrefix string
+	Parts       []*Primary
 }
 
 func (cp *Compound) parseInner(p *parser) {
+	// TODO: Parse TildePrefix correctly in assignment RHS
+	if prefix := findTildePrefix(p.rest()); prefix != "" {
+		p.consume(len(prefix))
+		cp.TildePrefix = prefix
+	}
 	for p.mayParseExpr() {
 		p.parseInto(&cp.Parts, &Primary{})
 	}
 }
 
+func findTildePrefix(s string) string {
+	if !hasPrefix(s, "~") {
+		return ""
+	}
+	for i, r := range s {
+		if i == 0 {
+			continue
+		}
+		if r == '/' || runeIn(r, exprStopper) {
+			return s[:i]
+		} else if runeIn(r, barewordStopper) {
+			return ""
+		}
+	}
+	return s
+}
+
 // Primary = Bareword
 type Primary struct {
 	node
-	Type  PrimaryType
-	Value string
+	Type     PrimaryType
+	Value    string
+	Variable *Variable
 }
 
 type PrimaryType int
 
 const (
-	Invalid PrimaryType = iota
-	Bareword
-	Variable
+	InvalidPrimary PrimaryType = iota
+	BarewordPrimary
+	VariablePrimary
+	SingleQuotedPrimary
 )
 
 func (pr *Primary) parseInner(p *parser) {
 start:
 	switch {
 	case p.nextInCompl(barewordStopper):
-		pr.Type = Bareword
-		pr.Value = p.consumeFunc(func(r rune) bool {
-			return !runeIn(r, barewordStopper)
-		})
-	case p.maybeConsume("$"):
-		pr.Type = Variable
-		if p.maybeConsume("{") {
-			pr.Value = p.consumeFunc(func(r rune) bool {
-				return !runeIn(r, barewordStopper)
-			})
-			if !p.maybeConsume("}") {
-				p.errorf("missing '}' to match '{'")
-			}
-		} else {
-			pr.Value = p.consumeFunc(func(r rune) bool {
-				return !runeIn(r, barewordStopper)
-			})
+		pr.Type = BarewordPrimary
+		pr.Value = p.consumeComplSet(barewordStopper)
+	case p.consumePrefix("'"):
+		pr.Type = SingleQuotedPrimary
+		pr.Value = p.consumeComplSet("'")
+		if !p.consumePrefix("'") {
+			p.errorf("unterminated single-quoted string")
 		}
+	case p.consumePrefix("$"):
+		pr.Type = VariablePrimary
+		p.parseInto(&pr.Variable, &Variable{})
+	case p.eof():
+		p.errorf("EOF where an expression is expected")
 	default:
 		p.skipInvalid()
+		fmt.Println("skipped one char, restart primary")
 		goto start
 	}
+}
+
+type Variable struct {
+	node
+	Name      string
+	LengthOp  bool
+	Modifiers *Modifier
+}
+
+var (
+	specialVariableSet = "@*#?-$!"
+	letterSet          = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	nameSet            = "_" + digitSet + letterSet
+)
+
+func (va *Variable) parseInner(p *parser) {
+	if !p.consumePrefix("{") {
+		// No braces, e.g. $x
+		va.Name = parseVariableName(p, false)
+		return
+	}
+	// Variable with braces, e.g. ${x:-fallback}
+	if p.consumePrefix("#") {
+		// We have seen "${#". It can either be the variable $# or the string
+		// length operator, depending on what comes next.
+		if p.startsWithOneOf("-}", "?}", "=}", "+}") != "" {
+			// This is ambiguous, but POSIX prefers # to be parsed as the string
+			// length operator. Note that since $=
+			// and $+ are not valid variable names this will eventually result
+			// in a parse error. We permit those.
+			va.LengthOp = true
+			va.Name = p.consume(1)
+			// va.Name = parseVariableName(p, true)
+		} else if p.startsWithOneOf("=}", "+}") != "" {
+			// According to POSIX, "${#=}" and "${#+}" should also parse the #
+			// as the string length operator. However, since $= and $+ are not
+			// valid variable names, this will result in an error. Parsing them
+			// as modifiers with an empty argument doesn't make sense either,
+			// since $# cannot be assigned and is always set. We complain and
+			// treat them as ${#}.
+			p.errorf("invalid parameter substitution ${#%s}, treating as ${#}", p.consume(1))
+			va.Name = "#"
+		} else if p.startsWith("}") || p.startsWithOneOf(modifierOps...) != "" {
+			va.Name = "#"
+		} else {
+			va.LengthOp = true
+			va.Name = parseVariableName(p, true)
+		}
+	} else {
+		va.Name = parseVariableName(p, true)
+	}
+	if p.startsWithCompl("}") {
+		p.parseInto(&va.Modifiers, &Modifier{})
+	}
+	p.mustConsumePrefix("}")
+	return
+}
+
+func parseVariableName(p *parser, brace bool) string {
+	if name := p.consumeOneOfSet(specialVariableSet); name != "" {
+		// Name may be one of the special variables. In that case, the name
+		// is always just one character. For instance, $$x is the same as $$"x",
+		// and ${$x} is invalid.
+		return name
+	} else if name0 := p.consumeOneOfSet(digitSet); name0 != "" {
+		// Name starts with a digit. If the variable is braced, the name can be
+		// a run of digits; otherwise the name is one digit. For instance, $0x
+		// is the same as $0"x", and ${0x} is invalid; $01 is the same as $0"1",
+		// and ${01} is the same as $1.
+		if !brace {
+			return name0
+		}
+		return name + p.consumeSet(digitSet)
+	} else if name := p.consumeSet(nameSet); name != "" {
+		// Parse an ordinary variable name, a run of characters in nameSet and
+		// not starting with a digit. We already know that the name won't start
+		// with a digit because that case is handled by the previous branch.
+		return name
+	} else {
+		p.errorf("missing or invalid variable name, assuming '_'")
+		return "_"
+	}
+}
+
+type Modifier struct {
+	node
+	Operator string
+	Argument *Compound
+}
+
+var modifierOps = []string{
+	":-", "-", ":=", "=", ":?", "?", ":+", "+", "%%", "%", "##", "#",
+}
+
+func (md *Modifier) parseInner(p *parser) {
+	md.Operator = p.consumeOneOf(modifierOps...)
+	if md.Operator == "" {
+		p.errorf("missing or invalid variable modifier, assuming ':-'")
+		md.Operator = ":-"
+	}
+	p.parseInto(&md.Argument, &Compound{})
 }
 
 // Lookahead.
 
 var (
-	commandStopper  = " \t\r\n;)&|"
+	commandStopper  = " \t\r\n;()}&|"
 	exprStopper     = commandStopper + "<>"
-	barewordStopper = exprStopper + `([]{}"'$*?`
+	barewordStopper = exprStopper + `[]{"'$*?`
 )
 
 func (p *parser) mayParseCommand() bool {
