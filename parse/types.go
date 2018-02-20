@@ -3,21 +3,61 @@ package parse
 // Basic types used by the package.
 
 import (
+	"bytes"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
 
 type parser struct {
-	text  string
+	orig string
+	// Text with \<newline> removed.
+	text string
+	// Occurances of line continuations, as indicies into text. This is useful
+	// when recovering the real position when reporting error or parsing
+	// single-quoted strings ( which is the only place where \<newline> does not
+	// function as line continuation).
+	lineCont []int
+
 	pos   int
 	stack []Node
 	err   Error
 }
 
-func newParser(text string) *parser {
-	return &parser{text: text}
+func newParser(orig string) *parser {
+	var lineCont []int
+	buf := &bytes.Buffer{}
+
+	lastBackslash := false
+	for _, r := range orig {
+		if lastBackslash {
+			if r == '\n' {
+				lineCont = append(lineCont, buf.Len())
+			} else {
+				buf.WriteRune('\\')
+				buf.WriteRune(r)
+			}
+			lastBackslash = false
+		} else if r == '\\' {
+			lastBackslash = true
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	// NOTE: \ just before EOF is treated as a line continuation.
+	if lastBackslash {
+		lineCont = append(lineCont, buf.Len())
+	}
+	return &parser{orig: orig, text: buf.String(), lineCont: lineCont}
+}
+
+func (p *parser) recoverPos(pos int) int {
+	// sort.SearchInts(a, i+1) returns the number of elements in a that <= i.
+	// Here, we find the number of line continuations that occur before pos
+	// (inclusive). Each line continuation occupies two bytes.
+	return pos + 2*sort.SearchInts(p.lineCont, pos+1)
 }
 
 func (p *parser) rest() string {
@@ -30,7 +70,7 @@ func (p *parser) eof() bool {
 
 func (p *parser) errorf(format string, a ...interface{}) {
 	p.err.Errors = append(p.err.Errors,
-		ErrorEntry{p.pos, fmt.Sprintf(format, a...)})
+		ErrorEntry{p.recoverPos(p.pos), fmt.Sprintf(format, a...)})
 }
 
 func (p *parser) consume(i int) string {

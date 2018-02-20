@@ -226,7 +226,14 @@ start:
 		pr.Value = p.consumeComplSet(barewordStopper)
 	case p.consumePrefix("'"):
 		pr.Type = SingleQuotedPrimary
-		pr.Value = p.consumeComplSet("'")
+		begin := p.pos
+		_ = p.consumeComplSet("'")
+		end := p.pos
+		// recoverPos returns a postion after all line continuations. When the
+		// single-quoted string has leading line continuations, those will be
+		// skipped. Hence, we adjust begin to the position of the opening quote,
+		// and adjust it back after recovery.
+		pr.Value = p.orig[p.recoverPos(begin-1)+1 : p.recoverPos(end)]
 		if !p.consumePrefix("'") {
 			p.errorf("unterminated single-quoted string")
 		}
