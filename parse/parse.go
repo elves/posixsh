@@ -25,12 +25,12 @@ type Chunk struct {
 
 var commandStopper = " \t\r\n;()}&|"
 
-// Chunk = w { Pipeline w }
+// Chunk = sw { Pipeline sw }
 func (ch *Chunk) parseInner(p *parser) {
-	p.w()
+	p.sw()
 	for p.mayParseCommand() {
 		p.parseInto(&ch.Pipelines, &Pipeline{})
-		p.w()
+		p.sw()
 	}
 }
 

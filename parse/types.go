@@ -183,6 +183,10 @@ func (p *parser) w() {
 	p.parse(&Whitespaces{})
 }
 
+func (p *parser) sw() {
+	p.parse(&Whitespaces{semicolon: true})
+}
+
 func (p *parser) meta(meta string) {
 	p.parse(&Meta{meta: meta})
 }
@@ -251,11 +255,12 @@ const (
 // characters.
 type Whitespaces struct {
 	node
-	inline bool
+	inline    bool
+	semicolon bool
 }
 
 func (w *Whitespaces) parseInner(p *parser) {
-	consumeWhitespacesAndComment(p, inlineWhitespaceSet)
+	consumeWhitespacesAndComment(p, inlineWhitespaceSet, w.semicolon)
 	if w.inline {
 		return
 	}
@@ -263,10 +268,13 @@ func (w *Whitespaces) parseInner(p *parser) {
 		p.parse(pending)
 	}
 	p.pendingHeredocs = nil
-	consumeWhitespacesAndComment(p, whitespaceSet)
+	consumeWhitespacesAndComment(p, whitespaceSet, w.semicolon)
 }
 
-func consumeWhitespacesAndComment(p *parser, set string) {
+func consumeWhitespacesAndComment(p *parser, set string, semicolon bool) {
+	if semicolon {
+		set += ";"
+	}
 	comment := false
 	p.consumeWhile(func(r rune) bool {
 		if r == '#' {
