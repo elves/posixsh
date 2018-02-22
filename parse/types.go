@@ -24,6 +24,9 @@ type parser struct {
 	pos   int
 	stack []Node
 	err   Error
+	// Heredocs are collected into this list when parsing the leader (e.g.
+	// <<EOF), and resolved when parsing newlines.
+	pendingHeredocs []*Heredoc
 }
 
 func newParser(orig string) *parser {
@@ -146,11 +149,16 @@ func (p *parser) parse(n Node) {
 	n.setEnd(p.pos)
 	p.stack[len(p.stack)-1] = nil
 	p.stack = p.stack[:len(p.stack)-1]
-	if len(p.stack) > 0 {
+	if len(p.stack) > 0 && !emptyWhitespaces(n) {
 		parent := p.stack[len(p.stack)-1]
 		parent.addChild(n)
 		n.setParent(parent)
 	}
+}
+
+func emptyWhitespaces(n Node) bool {
+	w, ok := n.(*Whitespaces)
+	return ok && w.begin == w.end
 }
 
 func (p *parser) parseInto(ptr interface{}, n Node) {
@@ -167,12 +175,12 @@ func (p *parser) parseInto(ptr interface{}, n Node) {
 
 // Shorthands for .parse calls.
 
-func (p *parser) inlineWhitespaces() {
-	p.parse(&Whitespaces{set: inlineWhitespaceSet})
+func (p *parser) iw() {
+	p.parse(&Whitespaces{inline: true})
 }
 
-func (p *parser) whitespaces() {
-	p.parse(&Whitespaces{set: whitespaceSet})
+func (p *parser) w() {
+	p.parse(&Whitespaces{})
 }
 
 func (p *parser) meta(meta string) {
@@ -243,10 +251,22 @@ const (
 // characters.
 type Whitespaces struct {
 	node
-	set string
+	inline bool
 }
 
-func (ws *Whitespaces) parseInner(p *parser) {
+func (w *Whitespaces) parseInner(p *parser) {
+	consumeWhitespacesAndComment(p, inlineWhitespaceSet)
+	if w.inline {
+		return
+	}
+	for _, pending := range p.pendingHeredocs {
+		p.parse(pending)
+	}
+	p.pendingHeredocs = nil
+	consumeWhitespacesAndComment(p, whitespaceSet)
+}
+
+func consumeWhitespacesAndComment(p *parser, set string) {
 	comment := false
 	p.consumeWhile(func(r rune) bool {
 		if r == '#' {
@@ -254,7 +274,7 @@ func (ws *Whitespaces) parseInner(p *parser) {
 		} else if r == '\n' {
 			comment = false
 		}
-		return comment || runeIn(r, ws.set)
+		return comment || runeIn(r, set)
 	})
 }
 

@@ -27,10 +27,10 @@ var commandStopper = " \t\r\n;()}&|"
 
 // Chunk = w { Pipeline w }
 func (ch *Chunk) parseInner(p *parser) {
-	p.whitespaces()
+	p.w()
 	for p.mayParseCommand() {
 		p.parseInto(&ch.Pipelines, &Pipeline{})
-		p.whitespaces()
+		p.w()
 	}
 }
 
@@ -42,11 +42,11 @@ type Pipeline struct {
 // Pipeline = Form iw { "|" w Form iw }
 func (pp *Pipeline) parseInner(p *parser) {
 	p.parseInto(&pp.Forms, &Form{})
-	p.inlineWhitespaces()
+	p.iw()
 	for p.maybeMeta("|") {
-		p.whitespaces()
+		p.w()
 		p.parseInto(&pp.Forms, &Form{})
-		p.inlineWhitespaces()
+		p.iw()
 	}
 }
 
@@ -57,44 +57,69 @@ type Form struct {
 	FnBody *CompoundCommand // If non-nil, this is a function definition form.
 }
 
-// Form = w { ( Compound | Redir ) iw } [ '(' iw ')' CompoundCommand ]
+const digitSet = "0123456789"
+
+// Form = w { ( Redir | Compound ) iw } [ '(' iw ')' CompoundCommand ]
 func (fm *Form) parseInner(p *parser) {
-	p.whitespaces()
+	p.w()
 items:
 	for {
+		restPastDigits := strings.TrimLeft(p.rest(), digitSet)
 		switch {
-		case startsRedir(p.rest()):
-			fmt.Println("parsing a redir")
+		case hasPrefix(restPastDigits, "<"), hasPrefix(restPastDigits, ">"):
 			p.parseInto(&fm.Redirs, &Redir{})
 		case p.mayParseExpr():
 			p.parseInto(&fm.Words, &Compound{})
 		default:
 			break items
 		}
-		p.inlineWhitespaces()
+		p.iw()
 	}
 	if p.maybeMeta("(") {
 		// Parse a function definition.
-		p.inlineWhitespaces()
+		p.iw()
 		p.meta(")")
 		p.parseInto(&fm.FnBody, &CompoundCommand{})
 	}
 }
 
-const digitSet = "0123456789"
-
-func startsRedir(rest string) bool {
-	rest = strings.TrimLeft(rest, digitSet)
-	return rest != "" && (rest[0] == '<' || rest[0] == '>')
+type Heredoc struct {
+	node
+	delim string
+	Value string
 }
 
-// Redir = w `[0-9]*` (">>" | "<>" | ">" | "<") w [ "&" w ] Compound
+// This function is called in (*Whitespaces).parseInner immediately after a \n,
+// for each pending Heredoc.
+func (hd *Heredoc) parseInner(p *parser) {
+	begin := p.pos
+	for i := p.pos; i < len(p.text); {
+		j := i + strings.IndexByte(p.text[i:], '\n')
+		iNext := j + 1
+		if j == -1 {
+			j = len(p.text)
+			iNext = j
+		}
+		line := p.text[i:j]
+		if line == hd.delim {
+			hd.Value = p.text[begin:i]
+			p.pos = iNext
+			return
+		}
+		i = iNext
+	}
+	p.errorf("undelimited heredoc %q", hd.delim)
+	hd.Value = p.text[begin:]
+	p.pos = len(p.text)
+}
+
 type Redir struct {
 	node
 	Left    int // -1 for absense
 	Mode    RedirMode
 	RightFd bool
 	Right   *Compound
+	Heredoc *Heredoc
 }
 
 type RedirMode int
@@ -105,10 +130,11 @@ const (
 	RedirOutput
 	RedirInputOutput
 	RedirAppend
+	RedirHeredoc
 )
 
+// Redir = `[0-9]*` (">>" | "<>" | ">" | "<" | "<<") w [ "&" w ] Compound
 func (rd *Redir) parseInner(p *parser) {
-	p.whitespaces()
 	left := p.consumeWhileIn(digitSet)
 	if left == "" {
 		rd.Left = -1
@@ -127,6 +153,8 @@ func (rd *Redir) parseInner(p *parser) {
 		rd.Mode = RedirAppend
 	case p.maybeMeta("<>"):
 		rd.Mode = RedirInputOutput
+	case p.maybeMeta("<<"):
+		rd.Mode = RedirHeredoc
 	case p.maybeMeta(">"):
 		rd.Mode = RedirOutput
 	case p.maybeMeta("<"):
@@ -135,12 +163,20 @@ func (rd *Redir) parseInner(p *parser) {
 		p.errorf("missing redirection symbol, assuming <")
 		rd.Mode = RedirInput
 	}
-	p.whitespaces()
+	p.w()
 	if p.maybeMeta("&") {
-		rd.RightFd = true
-		p.whitespaces()
+		if rd.Mode == RedirHeredoc {
+			p.errorf("<<& is not allowed, ignoring &")
+		} else {
+			rd.RightFd = true
+		}
+		p.w()
 	}
 	p.parseInto(&rd.Right, &Compound{})
+	if rd.Mode == RedirHeredoc {
+		rd.Heredoc = &Heredoc{delim: p.text[rd.Right.Begin():rd.Right.End()]}
+		p.pendingHeredocs = append(p.pendingHeredocs, rd.Heredoc)
+	}
 }
 
 type CompoundCommand struct {
@@ -152,7 +188,7 @@ type CompoundCommand struct {
 // CompoundCommand = w '{' Chunk w '}'
 //                 | w '(' Chunk w ')'
 func (cc *CompoundCommand) parseInner(p *parser) {
-	p.whitespaces()
+	p.w()
 	closer := ""
 	switch {
 	case p.maybeMeta("("):
