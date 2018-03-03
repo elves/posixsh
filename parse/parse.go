@@ -1,6 +1,8 @@
 // Package parse implements parsing of POSIX shell scripts.
 package parse
 
+//go:generate stringer -type=RedirMode,PrimaryType,DQSegmentType -output=string.go
+
 import (
 	"bytes"
 	"fmt"
@@ -246,8 +248,9 @@ func findTildePrefix(s string) string {
 type Primary struct {
 	node
 	Type PrimaryType
-	// String value after processing. Valid for BarewordPrimary and
-	// SingleQuotedPrimary.
+	// String value. Valid for BarewordPrimary, SingleQuotedPrimary and
+	// WildcardCharPrimary. For the first two types, the value contains the
+	// processed value, e.g. the bareword \a has value "a".
 	Value      string
 	Variable   *Variable
 	DQSegments []*DQSegment
@@ -261,10 +264,11 @@ const (
 	VariablePrimary
 	SingleQuotedPrimary
 	DoubleQuotedPrimary
+	WildcardCharPrimary
 )
 
 var (
-	barewordStopper    = exprStopper + "[]{\"'$*?"
+	barewordStopper    = exprStopper + "'\"$[]?*{"
 	rawBarewordStopper = barewordStopper + "\\"
 )
 
@@ -321,6 +325,8 @@ start:
 	case p.consumePrefix("$"):
 		pr.Type = VariablePrimary
 		p.parseInto(&pr.Variable, &Variable{})
+	case p.consumeRuneIn("[]*?") != "":
+		pr.Type = WildcardCharPrimary
 	case p.eof():
 		p.errorf("EOF where an expression is expected")
 	default:
