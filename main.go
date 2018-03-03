@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 
+	"github.com/elves/elvish/util"
+	"github.com/xiaq/posixsh/eval"
 	"github.com/xiaq/posixsh/parse"
 )
 
@@ -13,16 +15,30 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	input := string(buf)
+
 	ch := &parse.Chunk{}
-	rest, err := parse.Parse(string(buf), ch)
+	rest, err := parse.Parse(input, ch)
 	fmt.Println("node:", parse.PprintAST(ch))
 	if rest != "" {
-		fmt.Printf("parsed %d, rest %d\n", len(buf)-len(rest), len(rest))
+		parsedLen := len(input) - len(rest)
+		fmt.Printf("parsed %d, rest %d\n", parsedLen, len(rest))
+		fmt.Println("parsing stopped here:")
+		sr := util.NewSourceRange("input", input, parsedLen, parsedLen)
+		fmt.Println(sr.PprintCompact(""))
 	}
 	if err != nil {
 		fmt.Println("err:", err)
 		for _, entry := range err.(parse.Error).Errors {
-			fmt.Printf("  at %d: %s\n", entry.Position, entry.Message)
+			sr := util.NewSourceRange("input", input, entry.Position,
+				entry.Position)
+			fmt.Printf("  %s\n", entry.Message)
+			fmt.Printf("    %s\n", sr.PprintCompact(""))
 		}
+	}
+
+	err = eval.NewEvaler().EvalChunk(ch)
+	if err != nil {
+		fmt.Println("eval error:", err)
 	}
 }
