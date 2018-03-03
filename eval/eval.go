@@ -7,12 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/xiaq/posixsh/parse"
 )
 
 type Evaler struct {
-	scope map[string]string
+	globals map[string]string
 }
 
 func NewEvaler() *Evaler {
@@ -38,18 +39,29 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) error {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev, []*os.File{os.Stdin, os.Stdout, os.Stderr}}
+	return &frame{ev.globals, []*os.File{os.Stdin, os.Stdout, os.Stderr}}
 }
 
 type frame struct {
-	ev    *Evaler
-	files []*os.File
+	globals map[string]string
+	files   []*os.File
 }
 
-func (fm *frame) clone() *frame {
-	fm2 := *fm
-	fm2.files = append([]*os.File{}, fm.files...)
-	return &fm2
+func (fm *frame) cloneForRedir() *frame {
+	newFm := *fm
+	newFm.files = append([]*os.File{}, fm.files...)
+	return &newFm
+}
+
+func (fm *frame) cloneForSubshell() *frame {
+	newFm := &frame{
+		make(map[string]string), append([]*os.File{}, fm.files...),
+	}
+	// TODO: Optimize
+	for k, v := range fm.globals {
+		newFm.globals[k] = v
+	}
+	return newFm
 }
 
 func (fm *frame) chunk(ch *parse.Chunk) {
@@ -59,22 +71,58 @@ func (fm *frame) chunk(ch *parse.Chunk) {
 }
 
 func (fm *frame) pipeline(ch *parse.Pipeline) {
-	if len(ch.Forms) != 1 {
-		fmt.Println("pipeline not supported yet")
-	} else {
+	if len(ch.Forms) == 1 {
+		// Short path
 		fm.form(ch.Forms[0])
+		return
 	}
+	var wg sync.WaitGroup
+	wg.Add(len(ch.Forms))
+
+	var nextIn *os.File
+	for i, f := range ch.Forms {
+		var newFm *frame
+		var close0, close1 bool
+		if i < len(ch.Forms)-1 {
+			newFm = fm.cloneForSubshell()
+			r, w, err := os.Pipe()
+			if err != nil {
+				fmt.Println("pipe:", err)
+			}
+			newFm.files[1] = w
+			close1 = true
+			nextIn = r
+		} else {
+			newFm = fm.cloneForRedir()
+		}
+		if i > 0 {
+			newFm.files[0] = nextIn
+			close0 = true
+		}
+		theForm := f
+		go func() {
+			newFm.form(theForm)
+			if close0 {
+				newFm.files[0].Close()
+			}
+			if close1 {
+				newFm.files[1].Close()
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
 }
 
-func (fm *frame) form(fr *parse.Form) {
-	if fr.FnBody != nil {
+func (fm *frame) form(f *parse.Form) {
+	if f.FnBody != nil {
 		fmt.Println("function definition not supported yet")
 	}
-	if len(fr.Redirs) > 0 {
+	if len(f.Redirs) > 0 {
 		fmt.Println("redirs not supported yet")
 	}
 	var words []string
-	for _, cp := range fr.Words {
+	for _, cp := range f.Words {
 		words = append(words, fm.compound(cp))
 	}
 	if len(words) == 0 {
@@ -124,7 +172,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			return ""
 		}
 		go func() {
-			newFm := fm.clone()
+			newFm := fm.cloneForRedir()
 			newFm.files[1] = w
 			newFm.chunk(pr.Body)
 			w.Close()
