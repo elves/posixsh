@@ -146,30 +146,52 @@ func (fm *frame) form(f *parse.Form) bool {
 			}
 			var flag, defaultDst int
 			switch redir.Mode {
-			case parse.RedirInput:
+			case parse.RedirInput, parse.RedirHeredoc:
 				flag = os.O_RDONLY
 				defaultDst = 0
 			case parse.RedirOutput:
 				flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 				defaultDst = 1
 			case parse.RedirAppend:
-				flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+				flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 				defaultDst = 1
 			default:
 				fmt.Println("unsupported redir", redir.Mode)
 				continue
 			}
-			f, err := os.OpenFile(right, flag, 0644)
-			if err != nil {
-				fmt.Println(err)
-				continue
+			var src *os.File
+			if redir.Mode == parse.RedirHeredoc {
+				r, w, err := os.Pipe()
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				content := redir.Heredoc.Value
+				go func() {
+					n, err := w.WriteString(content)
+					if n < len(content) {
+						fmt.Println("short write", n, "<", len(content))
+					}
+					if err != nil {
+						fmt.Println(err)
+					}
+					w.Close()
+				}()
+				src = r
+			} else {
+				f, err := os.OpenFile(right, flag, 0644)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				src = f
 			}
 			dst := redir.Left
 			if dst == -1 {
 				dst = defaultDst
 			}
-			fm.files[dst] = f
-			defer f.Close()
+			fm.files[dst] = src
+			defer src.Close()
 		}
 	}
 	var words []string
