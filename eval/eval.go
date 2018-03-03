@@ -3,14 +3,16 @@ package eval
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/xiaq/posixsh/parse"
 )
 
 type Evaler struct {
-	Variables map[string]string
+	scope map[string]string
 }
 
 func NewEvaler() *Evaler {
@@ -31,34 +33,49 @@ func (ev *Evaler) Eval(code string) error {
 }
 
 func (ev *Evaler) EvalChunk(n *parse.Chunk) error {
-	ev.chunk(n)
+	ev.frame().chunk(n)
 	return nil
 }
 
-func (ev *Evaler) chunk(ch *parse.Chunk) {
+func (ev *Evaler) frame() *frame {
+	return &frame{ev, []*os.File{os.Stdin, os.Stdout, os.Stderr}}
+}
+
+type frame struct {
+	ev    *Evaler
+	files []*os.File
+}
+
+func (fm *frame) clone() *frame {
+	fm2 := *fm
+	fm2.files = append([]*os.File{}, fm.files...)
+	return &fm2
+}
+
+func (fm *frame) chunk(ch *parse.Chunk) {
 	for _, pp := range ch.Pipelines {
-		ev.pipeline(pp)
+		fm.pipeline(pp)
 	}
 }
 
-func (ev *Evaler) pipeline(ch *parse.Pipeline) {
+func (fm *frame) pipeline(ch *parse.Pipeline) {
 	if len(ch.Forms) != 1 {
 		fmt.Println("pipeline not supported yet")
 	} else {
-		ev.form(ch.Forms[0])
+		fm.form(ch.Forms[0])
 	}
 }
 
-func (ev *Evaler) form(fm *parse.Form) {
-	if fm.FnBody != nil {
+func (fm *frame) form(fr *parse.Form) {
+	if fr.FnBody != nil {
 		fmt.Println("function definition not supported yet")
 	}
-	if len(fm.Redirs) > 0 {
+	if len(fr.Redirs) > 0 {
 		fmt.Println("redirs not supported yet")
 	}
 	var words []string
-	for _, cp := range fm.Words {
-		words = append(words, ev.compound(cp))
+	for _, cp := range fr.Words {
+		words = append(words, fm.compound(cp))
 	}
 	if len(words) == 0 {
 		return
@@ -70,7 +87,7 @@ func (ev *Evaler) form(fm *parse.Form) {
 	}
 	words[0] = path
 	proc, err := os.StartProcess(path, words, &os.ProcAttr{
-		Files: []*os.File{os.Stdin, os.Stdout, os.Stderr},
+		Files: fm.files,
 	})
 	if err != nil {
 		fmt.Println(err)
@@ -85,21 +102,40 @@ func (ev *Evaler) form(fm *parse.Form) {
 	_ = state
 }
 
-func (ev *Evaler) compound(cp *parse.Compound) string {
+func (fm *frame) compound(cp *parse.Compound) string {
 	if cp.TildePrefix != "" {
 		fmt.Println("tilde not supported yet")
 	}
 	var buf bytes.Buffer
 	for _, pr := range cp.Parts {
-		buf.WriteString(ev.primary(pr))
+		buf.WriteString(fm.primary(pr))
 	}
 	return buf.String()
 }
 
-func (ev *Evaler) primary(pr *parse.Primary) string {
+func (fm *frame) primary(pr *parse.Primary) string {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		return pr.Value
+	case parse.OutputCapturePrimary:
+		r, w, err := os.Pipe()
+		if err != nil {
+			fmt.Println("pipe:", err)
+			return ""
+		}
+		go func() {
+			newFm := fm.clone()
+			newFm.files[1] = w
+			newFm.chunk(pr.Body)
+			w.Close()
+		}()
+		// TODO: Split by $IFS
+		output, err := ioutil.ReadAll(r)
+		r.Close()
+		if err != nil {
+			fmt.Println("read:", err)
+		}
+		return strings.TrimSuffix(string(output), "\n")
 	default:
 		fmt.Println("primary of type", pr.Type, "not supported yet")
 		return ""

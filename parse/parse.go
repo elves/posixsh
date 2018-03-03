@@ -253,6 +253,7 @@ type Primary struct {
 	Value      string
 	Variable   *Variable
 	DQSegments []*DQSegment
+	Body       *Chunk // Valid for OutputCapturePrimary.
 }
 
 type PrimaryType int
@@ -260,10 +261,11 @@ type PrimaryType int
 const (
 	InvalidPrimary PrimaryType = iota
 	BarewordPrimary
-	VariablePrimary
 	SingleQuotedPrimary
 	DoubleQuotedPrimary
 	WildcardCharPrimary
+	OutputCapturePrimary
+	VariablePrimary
 )
 
 var (
@@ -321,11 +323,18 @@ start:
 		for !p.consumePrefix(`"`) {
 			p.parseInto(&pr.DQSegments, &DQSegment{})
 		}
+	case p.consumeRuneIn("[]*?") != "":
+		pr.Type = WildcardCharPrimary
+	case p.consumePrefix("$("):
+		pr.Type = OutputCapturePrimary
+		p.parseInto(&pr.Body, &Chunk{})
+		p.sw()
+		if !p.consumePrefix(")") {
+			p.errorf("missing closing paranthesis for output capture")
+		}
 	case p.consumePrefix("$"):
 		pr.Type = VariablePrimary
 		p.parseInto(&pr.Variable, &Variable{})
-	case p.consumeRuneIn("[]*?") != "":
-		pr.Type = WildcardCharPrimary
 	case p.eof():
 		p.errorf("EOF where an expression is expected")
 	default:

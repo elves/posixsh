@@ -15,9 +15,9 @@ func (i RedirMode) String() string {
 	return _RedirMode_name[_RedirMode_index[i]:_RedirMode_index[i+1]]
 }
 
-const _PrimaryType_name = "InvalidPrimaryBarewordPrimaryVariablePrimarySingleQuotedPrimaryDoubleQuotedPrimaryWildcardCharPrimary"
+const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryWildcardCharPrimaryOutputCapturePrimaryVariablePrimary"
 
-var _PrimaryType_index = [...]uint8{0, 14, 29, 44, 63, 82, 101}
+var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 86, 106, 121}
 
 func (i PrimaryType) String() string {
 	if i < 0 || i >= PrimaryType(len(_PrimaryType_index)-1) {
