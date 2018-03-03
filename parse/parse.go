@@ -5,7 +5,6 @@ package parse
 
 import (
 	"bytes"
-	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -331,7 +330,6 @@ start:
 		p.errorf("EOF where an expression is expected")
 	default:
 		p.skipInvalid()
-		fmt.Println("skipped one char, restart primary")
 		goto start
 	}
 }

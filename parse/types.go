@@ -139,8 +139,6 @@ func (p *parser) skipInvalid() {
 // Common parsing logic.
 
 func (p *parser) parse(n Node) {
-	fmt.Printf("parse %T, pos %d\n", n, p.pos)
-
 	n.setBegin(p.pos)
 	p.stack = append(p.stack, n)
 
