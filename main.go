@@ -83,8 +83,8 @@ func doEval(input string) {
 		}
 	}
 
-	err = eval.NewEvaler().EvalChunk(ch)
-	if err != nil {
-		fmt.Println("eval error:", err)
+	ret := eval.NewEvaler().EvalChunk(ch)
+	if !ret {
+		os.Exit(1)
 	}
 }

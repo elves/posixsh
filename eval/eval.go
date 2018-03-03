@@ -20,22 +20,23 @@ func NewEvaler() *Evaler {
 	return &Evaler{make(map[string]string)}
 }
 
-func (ev *Evaler) Eval(code string) error {
+func (ev *Evaler) Eval(code string) bool {
 	n := &parse.Chunk{}
 	rest, err := parse.Parse(code, n)
 	if rest != "" {
-		return fmt.Errorf("trailing text: %q", rest)
+		fmt.Printf("trailing text: %q\n", rest)
+		return false
 	}
 	if err != nil {
-		return err
+		fmt.Println("parse error", err)
+		return false
 	}
 
 	return ev.EvalChunk(n)
 }
 
-func (ev *Evaler) EvalChunk(n *parse.Chunk) error {
-	ev.frame().chunk(n)
-	return nil
+func (ev *Evaler) EvalChunk(n *parse.Chunk) bool {
+	return ev.frame().chunk(n)
 }
 
 func (ev *Evaler) frame() *frame {
@@ -64,13 +65,15 @@ func (fm *frame) cloneForSubshell() *frame {
 	return newFm
 }
 
-func (fm *frame) chunk(ch *parse.Chunk) {
+func (fm *frame) chunk(ch *parse.Chunk) bool {
+	var ret bool
 	for _, ao := range ch.AndOrs {
-		fm.andOr(ao)
+		ret = fm.andOr(ao)
 	}
+	return ret
 }
 
-func (fm *frame) andOr(ao *parse.AndOr) {
+func (fm *frame) andOr(ao *parse.AndOr) bool {
 	var ret bool
 	for i, pp := range ao.Pipelines {
 		if i > 0 && ao.AndOp[i-1] != ret {
@@ -78,6 +81,7 @@ func (fm *frame) andOr(ao *parse.AndOr) {
 		}
 		ret = fm.pipeline(pp)
 	}
+	return ret
 }
 
 func (fm *frame) pipeline(ch *parse.Pipeline) bool {
