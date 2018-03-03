@@ -181,7 +181,6 @@ func (fm *frame) form(f *parse.Form) bool {
 				right := fm.compound(redir.Right)
 				f, err := os.OpenFile(right, flag, 0644)
 				if err != nil {
-					fmt.Println(err)
 					continue
 				}
 				src = f

@@ -262,7 +262,9 @@ func (w *Whitespaces) parseInner(p *parser) {
 	if w.inline {
 		return
 	}
-	p.consumePrefix("\n")
+	if !p.consumePrefix("\n") {
+		return
+	}
 	for _, pending := range p.pendingHeredocs {
 		p.parse(pending)
 	}
