@@ -190,6 +190,11 @@ func (fm *frame) form(f *parse.Form) bool {
 			if dst == -1 {
 				dst = defaultDst
 			}
+			if dst >= len(fm.files) {
+				newFiles := make([]*os.File, dst+1)
+				copy(newFiles, fm.files)
+				fm.files = newFiles
+			}
 			fm.files[dst] = src
 			defer src.Close()
 		}
