@@ -19,8 +19,10 @@ var (
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		f, err := os.Open(os.Args[1])
+	flag.Parse()
+	args := flag.Args()
+	if len(args) > 0 {
+		f, err := os.Open(args[0])
 		if err != nil {
 			fmt.Println(err)
 			return

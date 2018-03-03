@@ -65,21 +65,31 @@ func (fm *frame) cloneForSubshell() *frame {
 }
 
 func (fm *frame) chunk(ch *parse.Chunk) {
-	for _, pp := range ch.Pipelines {
-		fm.pipeline(pp)
+	for _, ao := range ch.AndOrs {
+		fm.andOr(ao)
 	}
 }
 
-func (fm *frame) pipeline(ch *parse.Pipeline) {
+func (fm *frame) andOr(ao *parse.AndOr) {
+	var ret bool
+	for i, pp := range ao.Pipelines {
+		if i > 0 && ao.AndOp[i-1] != ret {
+			continue
+		}
+		ret = fm.pipeline(pp)
+	}
+}
+
+func (fm *frame) pipeline(ch *parse.Pipeline) bool {
 	if len(ch.Forms) == 1 {
 		// Short path
-		fm.form(ch.Forms[0])
-		return
+		return fm.form(ch.Forms[0])
 	}
 	var wg sync.WaitGroup
 	wg.Add(len(ch.Forms))
 
 	var nextIn *os.File
+	var ppRet bool
 	for i, f := range ch.Forms {
 		var newFm *frame
 		var close0, close1 bool
@@ -100,8 +110,12 @@ func (fm *frame) pipeline(ch *parse.Pipeline) {
 			close0 = true
 		}
 		theForm := f
+		saveRet := i == len(ch.Forms)-1
 		go func() {
-			newFm.form(theForm)
+			ret := newFm.form(theForm)
+			if saveRet {
+				ppRet = ret
+			}
 			if close0 {
 				newFm.files[0].Close()
 			}
@@ -112,9 +126,10 @@ func (fm *frame) pipeline(ch *parse.Pipeline) {
 		}()
 	}
 	wg.Wait()
+	return ppRet
 }
 
-func (fm *frame) form(f *parse.Form) {
+func (fm *frame) form(f *parse.Form) bool {
 	if f.FnBody != nil {
 		fmt.Println("function definition not supported yet")
 	}
@@ -126,12 +141,12 @@ func (fm *frame) form(f *parse.Form) {
 		words = append(words, fm.compound(cp))
 	}
 	if len(words) == 0 {
-		return
+		return true
 	}
 	path, err := exec.LookPath(words[0])
 	if err != nil {
 		fmt.Println("search:", err)
-		return
+		return false
 	}
 	words[0] = path
 	proc, err := os.StartProcess(path, words, &os.ProcAttr{
@@ -139,15 +154,14 @@ func (fm *frame) form(f *parse.Form) {
 	})
 	if err != nil {
 		fmt.Println(err)
-		return
+		return false
 	}
 	state, err := proc.Wait()
 	if err != nil {
 		fmt.Println(err)
-		return
+		return false
 	}
-	// fmt.Println("state:", state)
-	_ = state
+	return state.Success()
 }
 
 func (fm *frame) compound(cp *parse.Compound) string {

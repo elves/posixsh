@@ -21,17 +21,40 @@ func Parse(text string, n Node) (string, error) {
 
 type Chunk struct {
 	node
-	Pipelines []*Pipeline
+	AndOrs []*AndOr
 }
 
 var commandStopper = " \t\r\n;()}&|"
 
-// Chunk = sw { Pipeline sw }
+// Chunk = sw { AndOr sw }
 func (ch *Chunk) parseInner(p *parser) {
 	p.sw()
 	for p.mayParseCommand() {
-		p.parseInto(&ch.Pipelines, &Pipeline{})
+		p.parseInto(&ch.AndOrs, &AndOr{})
 		p.sw()
+	}
+}
+
+type AndOr struct {
+	node
+	Pipelines []*Pipeline
+	AndOp     []bool
+}
+
+// AndOr = Pipeline iw { ("&&" | "||") w Pipeline iw }
+func (ao *AndOr) parseInner(p *parser) {
+	p.parseInto(&ao.Pipelines, &Pipeline{})
+	p.iw()
+	for {
+		// NOTE: Should be meta
+		op := p.consumePrefixIn("&&", "||")
+		if op == "" {
+			break
+		}
+		ao.AndOp = append(ao.AndOp, op == "&&")
+		p.w()
+		p.parseInto(&ao.Pipelines, &Pipeline{})
+		p.iw()
 	}
 }
 
@@ -40,11 +63,13 @@ type Pipeline struct {
 	Forms []*Form
 }
 
-// Pipeline = Form iw { "|" w Form iw }
+// Pipeline = Form iw { ("|" \ "||") w Form iw }
 func (pp *Pipeline) parseInner(p *parser) {
 	p.parseInto(&pp.Forms, &Form{})
 	p.iw()
-	for p.maybeMeta("|") {
+	for p.hasPrefix("|") && !p.hasPrefix("||") {
+		// | should be meta
+		p.consumePrefix("|")
 		p.w()
 		p.parseInto(&pp.Forms, &Form{})
 		p.iw()
