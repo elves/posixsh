@@ -87,7 +87,7 @@ func (fm *frame) andOr(ao *parse.AndOr) bool {
 func (fm *frame) pipeline(ch *parse.Pipeline) bool {
 	if len(ch.Forms) == 1 {
 		// Short path
-		return fm.form(ch.Forms[0])
+		return fm.cloneForRedir().form(ch.Forms[0])
 	}
 	var wg sync.WaitGroup
 	wg.Add(len(ch.Forms))
@@ -138,7 +138,39 @@ func (fm *frame) form(f *parse.Form) bool {
 		fmt.Println("function definition not supported yet")
 	}
 	if len(f.Redirs) > 0 {
-		fmt.Println("redirs not supported yet")
+		for _, redir := range f.Redirs {
+			right := fm.compound(redir.Right)
+			if redir.RightFd {
+				fmt.Println(">& not supported yet")
+				continue
+			}
+			var flag, defaultDst int
+			switch redir.Mode {
+			case parse.RedirInput:
+				flag = os.O_RDONLY
+				defaultDst = 0
+			case parse.RedirOutput:
+				flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+				defaultDst = 1
+			case parse.RedirAppend:
+				flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+				defaultDst = 1
+			default:
+				fmt.Println("unsupported redir", redir.Mode)
+				continue
+			}
+			f, err := os.OpenFile(right, flag, 0644)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			dst := redir.Left
+			if dst == -1 {
+				dst = defaultDst
+			}
+			fm.files[dst] = f
+			defer f.Close()
+		}
 	}
 	var words []string
 	for _, cp := range f.Words {
