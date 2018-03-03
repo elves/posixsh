@@ -139,7 +139,6 @@ func (fm *frame) form(f *parse.Form) bool {
 	}
 	if len(f.Redirs) > 0 {
 		for _, redir := range f.Redirs {
-			right := fm.compound(redir.Right)
 			if redir.RightFd {
 				fmt.Println(">& not supported yet")
 				continue
@@ -179,6 +178,7 @@ func (fm *frame) form(f *parse.Form) bool {
 				}()
 				src = r
 			} else {
+				right := fm.compound(redir.Right)
 				f, err := os.OpenFile(right, flag, 0644)
 				if err != nil {
 					fmt.Println(err)

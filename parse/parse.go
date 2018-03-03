@@ -111,8 +111,9 @@ items:
 
 type Heredoc struct {
 	node
-	delim string
-	Value string
+	delim  string
+	quoted bool
+	Value  string
 }
 
 // This function is called in (*Whitespaces).parseInner immediately after a \n,
@@ -200,9 +201,28 @@ func (rd *Redir) parseInner(p *parser) {
 	}
 	p.parseInto(&rd.Right, &Compound{})
 	if rd.Mode == RedirHeredoc {
-		rd.Heredoc = &Heredoc{delim: p.text[rd.Right.Begin():rd.Right.End()]}
+		delim, quoted := parseHeredocDelim(p, rd.Right)
+		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted}
 		p.pendingHeredocs = append(p.pendingHeredocs, rd.Heredoc)
 	}
+}
+
+func parseHeredocDelim(p *parser, cp *Compound) (delim string, quoted bool) {
+	var buf bytes.Buffer
+	for _, pr := range cp.Parts {
+		switch pr.Type {
+		case SingleQuotedPrimary:
+			quoted = true
+			buf.WriteString(pr.Value)
+		case DoubleQuotedPrimary:
+			// TODO: Unquote properly
+			quoted = true
+			buf.WriteString(p.text[pr.Begin()+1 : pr.End()-1])
+		default:
+			buf.WriteString(p.text[pr.Begin():pr.End()])
+		}
+	}
+	return buf.String(), quoted
 }
 
 type CompoundCommand struct {
