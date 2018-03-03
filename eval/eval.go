@@ -81,7 +81,8 @@ func (ev *Evaler) form(fm *parse.Form) {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println("state:", state)
+	// fmt.Println("state:", state)
+	_ = state
 }
 
 func (ev *Evaler) compound(cp *parse.Compound) string {
