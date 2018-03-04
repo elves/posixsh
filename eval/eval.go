@@ -332,7 +332,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		return strings.TrimSuffix(string(output), "\n")
 	case parse.VariablePrimary:
 		v := pr.Variable
-		value := fm.variables[v.Name]
+		value := fm.getVar(v.Name)
 		if v.Modifier != nil {
 			mod := v.Modifier
 			// TODO Implement operators
@@ -351,5 +351,20 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	default:
 		fmt.Println("primary of type", pr.Type, "not supported yet")
 		return ""
+	}
+}
+
+func (fm *frame) getVar(name string) string {
+	switch name {
+	case "*", "@":
+		return strings.Join(fm.arguments[1:], " ")
+	default:
+		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
+			if i < len(fm.arguments) {
+				return fm.arguments[i]
+			}
+			return ""
+		}
+		return fm.variables[name]
 	}
 }
