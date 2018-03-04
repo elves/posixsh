@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -198,6 +199,12 @@ func (fm *frame) form(f *parse.Form) bool {
 			defer src.Close()
 		}
 	}
+
+	// TODO: Temp assignment
+	for _, assign := range f.Assigns {
+		fm.globals[assign.LHS] = fm.compound(assign.RHS)
+	}
+
 	var words []string
 	for _, cp := range f.Words {
 		words = append(words, fm.compound(cp))
@@ -211,6 +218,7 @@ func (fm *frame) form(f *parse.Form) bool {
 		return false
 	}
 	words[0] = path
+
 	proc, err := os.StartProcess(path, words, &os.ProcAttr{
 		Files: fm.files,
 	})
@@ -218,6 +226,7 @@ func (fm *frame) form(f *parse.Form) bool {
 		fmt.Println(err)
 		return false
 	}
+
 	state, err := proc.Wait()
 	if err != nil {
 		fmt.Println(err)
@@ -241,6 +250,19 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		return pr.Value
+	case parse.DoubleQuotedPrimary:
+		var buf bytes.Buffer
+		for _, seg := range pr.DQSegments {
+			switch seg.Type {
+			case parse.DQStringSegment:
+				buf.WriteString(seg.Value)
+			case parse.DQExpansionSegment:
+				buf.WriteString(fm.primary(seg.Expansion))
+			default:
+				fmt.Println("unknown DQ segment type", seg.Type)
+			}
+		}
+		return buf.String()
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
@@ -260,6 +282,24 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			fmt.Println("read:", err)
 		}
 		return strings.TrimSuffix(string(output), "\n")
+	case parse.VariablePrimary:
+		v := pr.Variable
+		value := fm.globals[v.Name]
+		if v.Modifier != nil {
+			mod := v.Modifier
+			// TODO Implement operators
+			switch mod.Operator {
+			default:
+				fmt.Println("unknown operator", mod.Operator)
+			}
+			if mod.Operator[len(mod.Operator)-1] == '=' {
+				fm.globals[v.Name] = value
+			}
+		}
+		if v.LengthOp {
+			value = strconv.Itoa(len(value))
+		}
+		return value
 	default:
 		fmt.Println("primary of type", pr.Type, "not supported yet")
 		return ""

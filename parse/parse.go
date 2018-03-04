@@ -5,6 +5,7 @@ package parse
 
 import (
 	"bytes"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -78,16 +79,23 @@ func (pp *Pipeline) parseInner(p *parser) {
 
 type Form struct {
 	node
-	Words  []*Compound
-	Redirs []*Redir
-	FnBody *CompoundCommand // If non-nil, this is a function definition form.
+	Assigns []*Assign
+	Words   []*Compound
+	Redirs  []*Redir
+	FnBody  *CompoundCommand // If non-nil, this is a function definition form.
 }
 
 const digitSet = "0123456789"
 
-// Form = w { ( Redir | Compound ) iw } [ '(' iw ')' CompoundCommand ]
+var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
+
+// Form = w { Assign iw } { ( Redir | Compound ) iw } [ '(' iw ')' CompoundCommand ]
 func (fm *Form) parseInner(p *parser) {
 	p.w()
+	if assignPattern.MatchString(p.rest()) {
+		p.parseInto(&fm.Assigns, &Assign{})
+		p.iw()
+	}
 items:
 	for {
 		restPastDigits := strings.TrimLeft(p.rest(), digitSet)
@@ -107,6 +115,24 @@ items:
 		p.meta(")")
 		p.parseInto(&fm.FnBody, &CompoundCommand{})
 	}
+}
+
+type Assign struct {
+	node
+	LHS string
+	RHS *Compound
+}
+
+// Assign := `[a-zA-Z_][a-zA-Z0-9_]*` "=" Compound
+func (as *Assign) parseInner(p *parser) {
+	s := assignPattern.FindString(p.rest())
+	p.consume(len(s))
+	if s == "" {
+		p.errorf("missing LHS in assignment, assuming $_")
+		as.LHS = "_"
+	}
+	as.LHS = s[:len(s)-1]
+	p.parseInto(&as.RHS, &Compound{})
 }
 
 type Heredoc struct {
@@ -410,8 +436,10 @@ var (
 
 func (dq *DQSegment) parseInner(p *parser) {
 	if p.hasPrefixIn("$", "`") != "" {
+		dq.Type = DQExpansionSegment
 		p.parseInto(&dq.Expansion, &Primary{})
 	} else {
+		dq.Type = DQStringSegment
 		// Optimization: Consume a prefix that does not contain backslashes.
 		// This avoid building a bytes.Buffer when this segment is free of
 		// backslashes.
@@ -446,9 +474,9 @@ func (dq *DQSegment) parseInner(p *parser) {
 
 type Variable struct {
 	node
-	Name      string
-	LengthOp  bool
-	Modifiers *Modifier
+	Name     string
+	LengthOp bool
+	Modifier *Modifier
 }
 
 var (
@@ -494,7 +522,7 @@ func (va *Variable) parseInner(p *parser) {
 		va.Name = parseVariableName(p, true)
 	}
 	if p.hasPrefixNot("}") {
-		p.parseInto(&va.Modifiers, &Modifier{})
+		p.parseInto(&va.Modifier, &Modifier{})
 	}
 	if !p.consumePrefix("}") {
 		p.errorf("missing } to match {")
