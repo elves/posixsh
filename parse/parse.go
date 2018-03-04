@@ -25,7 +25,7 @@ type Chunk struct {
 	AndOrs []*AndOr
 }
 
-var commandStopper = " \t\r\n;()}&|"
+var commandStopper = " \t\r\n;)}&|"
 
 // Chunk = sw { AndOr sw }
 func (ch *Chunk) parseInner(p *parser) {
@@ -79,19 +79,37 @@ func (pp *Pipeline) parseInner(p *parser) {
 
 type Form struct {
 	node
+	Type    FormType
 	Assigns []*Assign
 	Words   []*Compound
 	Redirs  []*Redir
-	FnBody  *CompoundCommand // If non-nil, this is a function definition form.
+	Body    *CompoundCommand // Non-nil for FnDefinitionForm and CompoundCommandForm
 }
+
+type FormType int
+
+const (
+	InvalidForm FormType = iota
+	NormalForm
+	FnDefinitionForm
+	CompoundCommandForm
+)
 
 const digitSet = "0123456789"
 
 var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
 
-// Form = w { Assign iw } { ( Redir | Compound ) iw } [ '(' iw ')' CompoundCommand ]
+// Form = w CompoundCommand
+//      | w { Assign iw } { ( Redir | Compound ) iw }
+//      | w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
 func (fm *Form) parseInner(p *parser) {
 	p.w()
+	if p.hasPrefixIn("(", "{") != "" {
+		fm.Type = CompoundCommandForm
+		p.parseInto(&fm.Body, &CompoundCommand{})
+		return
+	}
+	fm.Type = NormalForm
 	if assignPattern.MatchString(p.rest()) {
 		p.parseInto(&fm.Assigns, &Assign{})
 		p.iw()
@@ -110,10 +128,11 @@ items:
 		p.iw()
 	}
 	if p.maybeMeta("(") {
+		fm.Type = FnDefinitionForm
 		// Parse a function definition.
 		p.iw()
 		p.meta(")")
-		p.parseInto(&fm.FnBody, &CompoundCommand{})
+		p.parseInto(&fm.Body, &CompoundCommand{})
 	}
 }
 
@@ -284,7 +303,7 @@ type Compound struct {
 	Parts       []*Primary
 }
 
-var exprStopper = commandStopper + "<>"
+var exprStopper = commandStopper + "<>("
 
 func (cp *Compound) parseInner(p *parser) {
 	// TODO: Parse TildePrefix correctly in assignment RHS

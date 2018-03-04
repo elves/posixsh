@@ -134,9 +134,20 @@ func (fm *frame) pipeline(ch *parse.Pipeline) bool {
 	return ppRet
 }
 
+func (fm *frame) compoundCommand(cc *parse.CompoundCommand) bool {
+	if cc.Subshell {
+		fm = fm.cloneForSubshell()
+	}
+	return fm.chunk(cc.Body)
+}
+
 func (fm *frame) form(f *parse.Form) bool {
-	if f.FnBody != nil {
+	switch f.Type {
+	case parse.CompoundCommandForm:
+		return fm.compoundCommand(f.Body)
+	case parse.FnDefinitionForm:
 		fmt.Println("function definition not supported yet")
+		return false
 	}
 	if len(f.Redirs) > 0 {
 		for _, redir := range f.Redirs {
