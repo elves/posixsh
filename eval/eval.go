@@ -223,6 +223,11 @@ func (fm *frame) form(f *parse.Form) bool {
 	if len(words) == 0 {
 		return true
 	}
+
+	if builtin, ok := builtins[words[0]]; ok {
+		return builtin(fm, words[1:]) == 0
+	}
+
 	path, err := exec.LookPath(words[0])
 	if err != nil {
 		fmt.Println("search:", err)
