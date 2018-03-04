@@ -12,9 +12,9 @@ var builtins = map[string]func(*frame, []string) int{
 func read(fm *frame, args []string) int {
 	line := getLine(fm.files[0])
 	if len(args) == 0 {
-		fm.globals["REPLY"] = line
+		fm.variables["REPLY"] = line
 	} else {
-		fm.globals[args[0]] = line
+		fm.variables[args[0]] = line
 		// TODO: Support multiple arguments:
 	}
 	return 0

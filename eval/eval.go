@@ -14,11 +14,17 @@ import (
 )
 
 type Evaler struct {
-	globals map[string]string
+	arguments []string
+	variables map[string]string
+	functions map[string]*parse.CompoundCommand
 }
 
 func NewEvaler() *Evaler {
-	return &Evaler{make(map[string]string)}
+	return &Evaler{
+		nil,
+		make(map[string]string),
+		make(map[string]*parse.CompoundCommand),
+	}
 }
 
 func (ev *Evaler) Eval(code string) bool {
@@ -41,27 +47,38 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) bool {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.globals, []*os.File{os.Stdin, os.Stdout, os.Stderr}}
+	return &frame{
+		ev.arguments, ev.variables, ev.functions,
+		[]*os.File{os.Stdin, os.Stdout, os.Stderr},
+	}
 }
 
 type frame struct {
-	globals map[string]string
-	files   []*os.File
+	arguments []string
+	variables map[string]string
+	functions map[string]*parse.CompoundCommand
+	files     []*os.File
 }
 
 func (fm *frame) cloneForRedir() *frame {
-	newFm := *fm
-	newFm.files = append([]*os.File{}, fm.files...)
-	return &newFm
+	return &frame{
+		fm.arguments, fm.variables, fm.functions,
+		append([]*os.File{}, fm.files...),
+	}
 }
 
 func (fm *frame) cloneForSubshell() *frame {
 	newFm := &frame{
-		make(map[string]string), append([]*os.File{}, fm.files...),
+		append([]string{}, fm.arguments...),
+		make(map[string]string), make(map[string]*parse.CompoundCommand),
+		append([]*os.File{}, fm.files...),
 	}
 	// TODO: Optimize
-	for k, v := range fm.globals {
-		newFm.globals[k] = v
+	for k, v := range fm.variables {
+		newFm.variables[k] = v
+	}
+	for k, v := range fm.functions {
+		newFm.functions[k] = v
 	}
 	return newFm
 }
@@ -146,8 +163,12 @@ func (fm *frame) form(f *parse.Form) bool {
 	case parse.CompoundCommandForm:
 		return fm.compoundCommand(f.Body)
 	case parse.FnDefinitionForm:
-		fmt.Println("function definition not supported yet")
-		return false
+		// TODO What to do with redirs?
+		for _, word := range f.Words {
+			name := fm.compound(word)
+			fm.functions[name] = f.Body
+		}
+		return true
 	}
 	if len(f.Redirs) > 0 {
 		for _, redir := range f.Redirs {
@@ -213,7 +234,7 @@ func (fm *frame) form(f *parse.Form) bool {
 
 	// TODO: Temp assignment
 	for _, assign := range f.Assigns {
-		fm.globals[assign.LHS] = fm.compound(assign.RHS)
+		fm.variables[assign.LHS] = fm.compound(assign.RHS)
 	}
 
 	var words []string
@@ -224,10 +245,21 @@ func (fm *frame) form(f *parse.Form) bool {
 		return true
 	}
 
+	// Functions?
+	if fn, ok := fm.functions[words[0]]; ok {
+		oldArgs := fm.arguments
+		fm.arguments = words
+		ret := fm.compoundCommand(fn)
+		fm.arguments = oldArgs
+		return ret
+	}
+
+	// Builtins?
 	if builtin, ok := builtins[words[0]]; ok {
 		return builtin(fm, words[1:]) == 0
 	}
 
+	// External commands?
 	path, err := exec.LookPath(words[0])
 	if err != nil {
 		fmt.Println("search:", err)
@@ -300,7 +332,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		return strings.TrimSuffix(string(output), "\n")
 	case parse.VariablePrimary:
 		v := pr.Variable
-		value := fm.globals[v.Name]
+		value := fm.variables[v.Name]
 		if v.Modifier != nil {
 			mod := v.Modifier
 			// TODO Implement operators
@@ -309,7 +341,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 				fmt.Println("unknown operator", mod.Operator)
 			}
 			if mod.Operator[len(mod.Operator)-1] == '=' {
-				fm.globals[v.Name] = value
+				fm.variables[v.Name] = value
 			}
 		}
 		if v.LengthOp {
