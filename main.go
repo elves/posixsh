@@ -8,8 +8,8 @@ import (
 	"io/ioutil"
 	"os"
 
+	"github.com/elves/elvish/diag"
 	"github.com/elves/elvish/sys"
-	"github.com/elves/elvish/util"
 	"github.com/xiaq/posixsh/eval"
 	"github.com/xiaq/posixsh/parse"
 )
@@ -70,13 +70,13 @@ func doEval(input string) {
 		parsedLen := len(input) - len(rest)
 		fmt.Printf("parsed %d, rest %d\n", parsedLen, len(rest))
 		fmt.Println("parsing stopped here:")
-		sr := util.NewSourceRange("input", input, parsedLen, parsedLen)
+		sr := diag.NewSourceRange("input", input, parsedLen, parsedLen)
 		fmt.Println(sr.PprintCompact(""))
 	}
 	if err != nil {
 		fmt.Println("err:", err)
 		for _, entry := range err.(parse.Error).Errors {
-			sr := util.NewSourceRange("input", input, entry.Position,
+			sr := diag.NewSourceRange("input", input, entry.Position,
 				entry.Position)
 			fmt.Printf("  %s\n", entry.Message)
 			fmt.Printf("    %s\n", sr.PprintCompact(""))
