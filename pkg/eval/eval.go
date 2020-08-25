@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/elves/posixsh/parse"
+	"github.com/elves/posixsh/pkg/parse"
 )
 
 type Evaler struct {

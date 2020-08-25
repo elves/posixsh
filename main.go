@@ -10,8 +10,8 @@ import (
 
 	"github.com/elves/elvish/pkg/diag"
 	"github.com/elves/elvish/pkg/sys"
-	"github.com/elves/posixsh/eval"
-	"github.com/elves/posixsh/parse"
+	"github.com/elves/posixsh/pkg/eval"
+	"github.com/elves/posixsh/pkg/parse"
 )
 
 var (
