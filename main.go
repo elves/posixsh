@@ -8,10 +8,10 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/elves/elvish/pkg/diag"
-	"github.com/elves/elvish/pkg/sys"
 	"github.com/elves/posixsh/pkg/eval"
 	"github.com/elves/posixsh/pkg/parse"
+	"src.elv.sh/pkg/diag"
+	"src.elv.sh/pkg/sys"
 )
 
 var (
@@ -30,7 +30,7 @@ func main() {
 		defer f.Close()
 		evalAll(f)
 		return
-	} else if sys.IsATTY(os.Stdin) {
+	} else if sys.IsATTY(os.Stdin.Fd()) {
 		repl()
 	} else {
 		evalAll(os.Stdin)
