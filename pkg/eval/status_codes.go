@@ -15,6 +15,7 @@ const (
 	StatusSyntaxError = 2
 
 	// Not sure what other shells use for the following error conditions.
+	StatusPipeError = 100
 	StatusWaitError = 101
 	StatusWaitOther = 102
 

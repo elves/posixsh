@@ -69,9 +69,9 @@ func (fm *frame) cloneForRedir() *frame {
 
 func (fm *frame) cloneForSubshell() *frame {
 	newFm := &frame{
-		append([]string{}, fm.arguments...),
+		append([]string(nil), fm.arguments...),
 		make(map[string]string), make(map[string]*parse.CompoundCommand),
-		append([]*os.File{}, fm.files...),
+		append([]*os.File(nil), fm.files...),
 	}
 	// TODO: Optimize with copy on write
 	for k, v := range fm.variables {
@@ -106,50 +106,54 @@ func (fm *frame) andOr(ao *parse.AndOr) int {
 }
 
 func (fm *frame) pipeline(ch *parse.Pipeline) int {
-	if len(ch.Forms) == 1 {
+	n := len(ch.Forms)
+	if n == 1 {
 		// Short path
 		return fm.cloneForRedir().form(ch.Forms[0])
 	}
-	var wg sync.WaitGroup
-	wg.Add(len(ch.Forms))
 
-	var nextIn *os.File
+	pipes := make([][2]*os.File, n-1)
+	for i := 0; i < n-1; i++ {
+		r, w, err := os.Pipe()
+		if err != nil {
+			fmt.Fprintln(fm.files[2], "pipe:", err)
+			for j := 0; j < i; j++ {
+				pipes[j][0].Close()
+				pipes[j][1].Close()
+			}
+			return StatusPipeError
+		}
+		pipes[i][0], pipes[i][1] = r, w
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+
 	var ppRet int
 	for i, f := range ch.Forms {
 		var newFm *frame
-		var close0, close1 bool
-		if i < len(ch.Forms)-1 {
+		if i < n-1 {
 			newFm = fm.cloneForSubshell()
-			r, w, err := os.Pipe()
-			if err != nil {
-				// TODO: Terminate
-				fmt.Fprintln(fm.files[2], "pipe:", err)
-			}
-			newFm.files[1] = w
-			close1 = true
-			nextIn = r
+			newFm.files[1] = pipes[i][1]
 		} else {
 			newFm = fm.cloneForRedir()
 		}
 		if i > 0 {
-			newFm.files[0] = nextIn
-			close0 = true
+			newFm.files[0] = pipes[i-1][0]
 		}
-		theForm := f
-		saveRet := i == len(ch.Forms)-1
-		go func() {
-			ret := newFm.form(theForm)
-			if saveRet {
+		go func(i int, f *parse.Form) {
+			ret := newFm.form(f)
+			if i == n-1 {
 				ppRet = ret
 			}
-			if close0 {
+			if i > 0 {
 				newFm.files[0].Close()
 			}
-			if close1 {
+			if i < n-1 {
 				newFm.files[1].Close()
 			}
 			wg.Done()
-		}()
+		}(i, f)
 	}
 	wg.Wait()
 	return ppRet
