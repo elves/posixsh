@@ -47,6 +47,9 @@ func TestSpecs(t *testing.T) {
 			if diff := cmp.Diff(spec.wantStderr, stderr); diff != "" {
 				t.Errorf("stderr (-want+got):\n%v", diff)
 			}
+			if t.Failed() {
+				t.Logf("code is:\n%v", spec.code)
+			}
 		})
 	}
 }
