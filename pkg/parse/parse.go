@@ -416,8 +416,11 @@ start:
 		}
 	case p.consumePrefix(`"`):
 		pr.Type = DoubleQuotedPrimary
-		for !p.consumePrefix(`"`) {
+		for !p.eof() && !p.consumePrefix(`"`) {
 			p.parseInto(&pr.DQSegments, &DQSegment{})
+		}
+		if p.eof() {
+			p.errorf("unterminated double-quoted string")
 		}
 	case p.consumeRuneIn("[]*?") != "":
 		pr.Type = WildcardCharPrimary
