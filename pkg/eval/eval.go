@@ -28,12 +28,7 @@ func NewEvaler() *Evaler {
 }
 
 func (ev *Evaler) Eval(code string) bool {
-	n := &parse.Chunk{}
-	rest, err := parse.Parse(code, n)
-	if rest != "" {
-		fmt.Printf("trailing text: %q\n", rest)
-		return false
-	}
+	n, err := parse.Parse(code)
 	if err != nil {
 		fmt.Println("parse error", err)
 		return false

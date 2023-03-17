@@ -61,17 +61,9 @@ func evalAll(r io.Reader) {
 }
 
 func doEval(input string) {
-	ch := &parse.Chunk{}
-	rest, err := parse.Parse(input, ch)
+	n, err := parse.Parse(input)
 	if *printAST {
-		fmt.Println("node:", parse.PprintAST(ch))
-	}
-	if rest != "" {
-		parsedLen := len(input) - len(rest)
-		fmt.Printf("parsed %d, rest %d\n", parsedLen, len(rest))
-		fmt.Println("parsing stopped here:")
-		sr := diag.NewContext("input", input, diag.PointRanging(parsedLen))
-		fmt.Println(sr.ShowCompact(""))
+		fmt.Println("node:", parse.PprintAST(n))
 	}
 	if err != nil {
 		fmt.Println("err:", err)
@@ -82,7 +74,7 @@ func doEval(input string) {
 		}
 	}
 
-	ret := eval.NewEvaler().EvalChunk(ch)
+	ret := eval.NewEvaler().EvalChunk(n)
 	if !ret {
 		os.Exit(1)
 	}

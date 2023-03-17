@@ -11,13 +11,17 @@ import (
 	"unicode/utf8"
 )
 
-func Parse(text string, n Node) (string, error) {
+func Parse(text string) (*Chunk, error) {
 	p := newParser(text)
+	n := &Chunk{}
 	p.parse(n)
-	if len(p.err.Errors) == 0 {
-		return p.rest(), nil
+	if p.rest() != "" {
+		p.errorf("unparsed code")
 	}
-	return p.rest(), p.err
+	if len(p.err.Errors) == 0 {
+		return n, nil
+	}
+	return n, p.err
 }
 
 type Chunk struct {
@@ -100,8 +104,9 @@ const digitSet = "0123456789"
 var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
 
 // Form = w CompoundCommand
-//      | w { Assign iw } { ( Redir | Compound ) iw }
-//      | w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
+//
+//	| w { Assign iw } { ( Redir | Compound ) iw }
+//	| w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
 func (fm *Form) parseInner(p *parser) {
 	p.w()
 	if p.hasPrefixIn("(", "{") != "" {
@@ -277,7 +282,8 @@ type CompoundCommand struct {
 }
 
 // CompoundCommand = w '{' Chunk w '}'
-//                 | w '(' Chunk w ')'
+//
+//	| w '(' Chunk w ')'
 func (cc *CompoundCommand) parseInner(p *parser) {
 	p.w()
 	closer := ""
