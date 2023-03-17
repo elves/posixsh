@@ -17,9 +17,11 @@ type spec struct {
 	name  string
 	code  string
 
-	wantStatus int
-	wantStdout string
-	wantStderr string
+	wantStatus  int
+	checkStdout bool
+	wantStdout  string
+	checkStderr bool
+	wantStderr  string
 }
 
 //go:embed oil/*.test.sh
@@ -41,11 +43,15 @@ func TestSpecs(t *testing.T) {
 			if status != spec.wantStatus {
 				t.Errorf("got status %v, want %v", status, spec.wantStatus)
 			}
-			if diff := cmp.Diff(spec.wantStdout, stdout); diff != "" {
-				t.Errorf("stdout (-want+got):\n%v", diff)
+			if spec.checkStdout {
+				if diff := cmp.Diff(spec.wantStdout, stdout); diff != "" {
+					t.Errorf("stdout (-want+got):\n%v", diff)
+				}
 			}
-			if diff := cmp.Diff(spec.wantStderr, stderr); diff != "" {
-				t.Errorf("stderr (-want+got):\n%v", diff)
+			if spec.checkStderr {
+				if diff := cmp.Diff(spec.wantStderr, stderr); diff != "" {
+					t.Errorf("stderr (-want+got):\n%v", diff)
+				}
 			}
 			if t.Failed() {
 				t.Logf("code is:\n%v", spec.code)
