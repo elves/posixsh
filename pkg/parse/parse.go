@@ -432,8 +432,14 @@ start:
 			p.errorf("missing closing paranthesis for output capture")
 		}
 	case p.consumePrefix("$"):
-		pr.Type = VariablePrimary
-		p.parseInto(&pr.Variable, &Variable{})
+		if p.nextIn(variableInitialSet) {
+			pr.Type = VariablePrimary
+			p.parseInto(&pr.Variable, &Variable{})
+		} else {
+			// If a variable can't be parsed, it's not an error but a bareword.
+			pr.Type = BarewordPrimary
+			pr.Value = "$"
+		}
 	case p.eof():
 		p.errorf("EOF where an expression is expected")
 	default:
@@ -508,6 +514,7 @@ type Variable struct {
 }
 
 var (
+	variableInitialSet = "{" + specialVariableSet + nameSet
 	specialVariableSet = "@*#?-$!"
 	letterSet          = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	nameSet            = "_" + digitSet + letterSet
