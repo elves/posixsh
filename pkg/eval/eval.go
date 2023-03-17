@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/elves/posixsh/pkg/parse"
 )
@@ -31,17 +32,17 @@ func NewEvaler(files []*os.File) *Evaler {
 	}
 }
 
-func (ev *Evaler) Eval(code string) bool {
+func (ev *Evaler) Eval(code string) int {
 	n, err := parse.Parse(code)
 	if err != nil {
 		fmt.Println("parse error", err)
-		return false
+		return StatusSyntaxError
 	}
 
 	return ev.EvalChunk(n)
 }
 
-func (ev *Evaler) EvalChunk(n *parse.Chunk) bool {
+func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 	return ev.frame().chunk(n)
 }
 
@@ -79,26 +80,29 @@ func (fm *frame) cloneForSubshell() *frame {
 	return newFm
 }
 
-func (fm *frame) chunk(ch *parse.Chunk) bool {
-	var ret bool
+func (fm *frame) chunk(ch *parse.Chunk) int {
+	var ret int
 	for _, ao := range ch.AndOrs {
 		ret = fm.andOr(ao)
 	}
 	return ret
 }
 
-func (fm *frame) andOr(ao *parse.AndOr) bool {
-	var ret bool
+func (fm *frame) andOr(ao *parse.AndOr) int {
+	var ret int
 	for i, pp := range ao.Pipelines {
-		if i > 0 && ao.AndOp[i-1] != ret {
-			continue
+		if i > 0 {
+			and := ao.AndOp[i-1]
+			if (and && ret != 0) || (!and && ret == 0) {
+				continue
+			}
 		}
 		ret = fm.pipeline(pp)
 	}
 	return ret
 }
 
-func (fm *frame) pipeline(ch *parse.Pipeline) bool {
+func (fm *frame) pipeline(ch *parse.Pipeline) int {
 	if len(ch.Forms) == 1 {
 		// Short path
 		return fm.cloneForRedir().form(ch.Forms[0])
@@ -107,7 +111,7 @@ func (fm *frame) pipeline(ch *parse.Pipeline) bool {
 	wg.Add(len(ch.Forms))
 
 	var nextIn *os.File
-	var ppRet bool
+	var ppRet int
 	for i, f := range ch.Forms {
 		var newFm *frame
 		var close0, close1 bool
@@ -147,14 +151,14 @@ func (fm *frame) pipeline(ch *parse.Pipeline) bool {
 	return ppRet
 }
 
-func (fm *frame) compoundCommand(cc *parse.CompoundCommand) bool {
+func (fm *frame) compoundCommand(cc *parse.CompoundCommand) int {
 	if cc.Subshell {
 		fm = fm.cloneForSubshell()
 	}
 	return fm.chunk(cc.Body)
 }
 
-func (fm *frame) form(f *parse.Form) bool {
+func (fm *frame) form(f *parse.Form) int {
 	switch f.Type {
 	case parse.CompoundCommandForm:
 		return fm.compoundCommand(f.Body)
@@ -164,7 +168,7 @@ func (fm *frame) form(f *parse.Form) bool {
 			name := fm.compound(word)
 			fm.functions[name] = f.Body
 		}
-		return true
+		return 0
 	}
 	if len(f.Redirs) > 0 {
 		for _, redir := range f.Redirs {
@@ -238,7 +242,7 @@ func (fm *frame) form(f *parse.Form) bool {
 		words = append(words, fm.compound(cp))
 	}
 	if len(words) == 0 {
-		return true
+		return 0
 	}
 
 	// Functions?
@@ -252,14 +256,16 @@ func (fm *frame) form(f *parse.Form) bool {
 
 	// Builtins?
 	if builtin, ok := builtins[words[0]]; ok {
-		return builtin(fm, words[1:]) == 0
+		return builtin(fm, words[1:])
 	}
 
 	// External commands?
 	path, err := exec.LookPath(words[0])
 	if err != nil {
 		fmt.Println("search:", err)
-		return false
+		// TODO: Return StatusCommandNotExecutable if file exists but is not
+		// executable.
+		return StatusCommandNotFound
 	}
 	words[0] = path
 
@@ -268,15 +274,23 @@ func (fm *frame) form(f *parse.Form) bool {
 	})
 	if err != nil {
 		fmt.Println(err)
-		return false
+		return StatusCommandNotExecutable
 	}
 
 	state, err := proc.Wait()
 	if err != nil {
 		fmt.Println(err)
-		return false
+		return StatusWaitError
 	}
-	return state.Success()
+	if state.Exited() {
+		return state.ExitCode()
+	} else {
+		waitStatus := state.Sys().(syscall.WaitStatus)
+		if waitStatus.Signaled() {
+			return StatusSignalBase + int(waitStatus.Signal())
+		}
+		return StatusWaitOther
+	}
 }
 
 func (fm *frame) compound(cp *parse.Compound) string {

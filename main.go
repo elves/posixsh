@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 
 	"github.com/elves/posixsh/pkg/eval"
@@ -53,7 +52,7 @@ func repl() {
 }
 
 func evalAll(r io.Reader) {
-	buf, err := ioutil.ReadAll(r)
+	buf, err := io.ReadAll(r)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -74,8 +73,8 @@ func doEval(input string) {
 		}
 	}
 
-	ret := eval.NewEvaler(eval.StdFiles).EvalChunk(n)
-	if !ret {
-		os.Exit(1)
+	status := eval.NewEvaler(eval.StdFiles).EvalChunk(n)
+	if status != 0 {
+		fmt.Println("status:", status)
 	}
 }
