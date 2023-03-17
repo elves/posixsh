@@ -74,7 +74,7 @@ func doEval(input string) {
 		}
 	}
 
-	ret := eval.NewEvaler().EvalChunk(n)
+	ret := eval.NewEvaler(eval.StdFiles).EvalChunk(n)
 	if !ret {
 		os.Exit(1)
 	}

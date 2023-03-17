@@ -17,13 +17,17 @@ type Evaler struct {
 	arguments []string
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
+	files     []*os.File
 }
 
-func NewEvaler() *Evaler {
+var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
+
+func NewEvaler(files []*os.File) *Evaler {
 	return &Evaler{
 		nil,
 		make(map[string]string),
 		make(map[string]*parse.CompoundCommand),
+		files,
 	}
 }
 
@@ -42,10 +46,7 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) bool {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{
-		ev.arguments, ev.variables, ev.functions,
-		[]*os.File{os.Stdin, os.Stdout, os.Stderr},
-	}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files}
 }
 
 type frame struct {
@@ -58,7 +59,7 @@ type frame struct {
 func (fm *frame) cloneForRedir() *frame {
 	return &frame{
 		fm.arguments, fm.variables, fm.functions,
-		append([]*os.File{}, fm.files...),
+		append([]*os.File(nil), fm.files...),
 	}
 }
 
@@ -68,7 +69,7 @@ func (fm *frame) cloneForSubshell() *frame {
 		make(map[string]string), make(map[string]*parse.CompoundCommand),
 		append([]*os.File{}, fm.files...),
 	}
-	// TODO: Optimize
+	// TODO: Optimize with copy on write
 	for k, v := range fm.variables {
 		newFm.variables[k] = v
 	}
