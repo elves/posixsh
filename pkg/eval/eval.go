@@ -24,6 +24,9 @@ type Evaler struct {
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
 
 func NewEvaler(files []*os.File) *Evaler {
+	if len(files) < 3 {
+		panic("files must have at least 3 elements")
+	}
 	return &Evaler{
 		nil,
 		make(map[string]string),
@@ -35,7 +38,7 @@ func NewEvaler(files []*os.File) *Evaler {
 func (ev *Evaler) Eval(code string) int {
 	n, err := parse.Parse(code)
 	if err != nil {
-		fmt.Println("parse error", err)
+		fmt.Fprintln(ev.files[2], "parse error", err)
 		return StatusSyntaxError
 	}
 
@@ -119,7 +122,8 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 			newFm = fm.cloneForSubshell()
 			r, w, err := os.Pipe()
 			if err != nil {
-				fmt.Println("pipe:", err)
+				// TODO: Terminate
+				fmt.Fprintln(fm.files[2], "pipe:", err)
 			}
 			newFm.files[1] = w
 			close1 = true
@@ -173,7 +177,7 @@ func (fm *frame) form(f *parse.Form) int {
 	if len(f.Redirs) > 0 {
 		for _, redir := range f.Redirs {
 			if redir.RightFd {
-				fmt.Println(">& not supported yet")
+				fmt.Fprintln(fm.files[2], ">& not supported yet")
 				continue
 			}
 			var flag, defaultDst int
@@ -188,24 +192,24 @@ func (fm *frame) form(f *parse.Form) int {
 				flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
 				defaultDst = 1
 			default:
-				fmt.Println("unsupported redir", redir.Mode)
+				fmt.Fprintln(fm.files[2], "unsupported redir", redir.Mode)
 				continue
 			}
 			var src *os.File
 			if redir.Mode == parse.RedirHeredoc {
 				r, w, err := os.Pipe()
 				if err != nil {
-					fmt.Println(err)
+					fmt.Fprintln(fm.files[2], "pipe:", err)
 					continue
 				}
 				content := redir.Heredoc.Value
 				go func() {
 					n, err := w.WriteString(content)
 					if n < len(content) {
-						fmt.Println("short write", n, "<", len(content))
+						fmt.Fprintln(fm.files[2], "short write", n, "<", len(content))
 					}
 					if err != nil {
-						fmt.Println(err)
+						fmt.Fprintln(fm.files[2], err)
 					}
 					w.Close()
 				}()
@@ -262,7 +266,7 @@ func (fm *frame) form(f *parse.Form) int {
 	// External commands?
 	path, err := exec.LookPath(words[0])
 	if err != nil {
-		fmt.Println("search:", err)
+		fmt.Fprintln(fm.files[2], "search:", err)
 		// TODO: Return StatusCommandNotExecutable if file exists but is not
 		// executable.
 		return StatusCommandNotFound
@@ -273,13 +277,13 @@ func (fm *frame) form(f *parse.Form) int {
 		Files: fm.files,
 	})
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(fm.files[2], err)
 		return StatusCommandNotExecutable
 	}
 
 	state, err := proc.Wait()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(fm.files[2], err)
 		return StatusWaitError
 	}
 	if state.Exited() {
@@ -295,7 +299,7 @@ func (fm *frame) form(f *parse.Form) int {
 
 func (fm *frame) compound(cp *parse.Compound) string {
 	if cp.TildePrefix != "" {
-		fmt.Println("tilde not supported yet")
+		fmt.Fprintln(fm.files[2], "tilde not supported yet")
 	}
 	var buf bytes.Buffer
 	for _, pr := range cp.Parts {
@@ -317,14 +321,14 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			case parse.DQExpansionSegment:
 				buf.WriteString(fm.primary(seg.Expansion))
 			default:
-				fmt.Println("unknown DQ segment type", seg.Type)
+				fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
 			}
 		}
 		return buf.String()
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
-			fmt.Println("pipe:", err)
+			fmt.Fprintln(fm.files[2], "pipe:", err)
 			return ""
 		}
 		go func() {
@@ -337,7 +341,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		output, err := ioutil.ReadAll(r)
 		r.Close()
 		if err != nil {
-			fmt.Println("read:", err)
+			fmt.Fprintln(fm.files[2], "read:", err)
 		}
 		return strings.TrimSuffix(string(output), "\n")
 	case parse.VariablePrimary:
@@ -348,7 +352,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			// TODO Implement operators
 			switch mod.Operator {
 			default:
-				fmt.Println("unknown operator", mod.Operator)
+				fmt.Fprintln(fm.files[2], "unknown operator", mod.Operator)
 			}
 			if mod.Operator[len(mod.Operator)-1] == '=' {
 				fm.variables[v.Name] = value
@@ -359,7 +363,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		}
 		return value
 	default:
-		fmt.Println("primary of type", pr.Type, "not supported yet")
+		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
 		return ""
 	}
 }
