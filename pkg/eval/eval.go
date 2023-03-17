@@ -376,6 +376,9 @@ func (fm *frame) getVar(name string) string {
 	switch name {
 	case "*", "@":
 		return strings.Join(fm.arguments[1:], " ")
+	case "?":
+		// TODO: Actually return $?
+		return "0"
 	default:
 		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
 			if i < len(fm.arguments) {
