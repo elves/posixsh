@@ -31,10 +31,10 @@ var specs = parseOilSpecFilesInFS(oilFiles, "oil")
 
 func TestSpecs(t *testing.T) {
 	for _, spec := range specs {
-		if !shouldRunSuite(spec.suite) {
-			continue
-		}
 		t.Run(spec.suite+"/"+spec.name, func(t *testing.T) {
+			if !shouldRunSuite(spec.suite) {
+				t.Skip()
+			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()
 			ev := eval.NewEvaler(files)
@@ -62,7 +62,7 @@ func TestSpecs(t *testing.T) {
 
 func shouldRunSuite(name string) bool {
 	switch name {
-	case "oil/quote.test.sh":
+	case "oil/comments.test.sh", "oil/quote.test.sh":
 		return true
 	default:
 		return false

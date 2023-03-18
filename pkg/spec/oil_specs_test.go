@@ -25,7 +25,7 @@ func parseOilSpecFilesInFS(fs embed.FS, dir string) []spec {
 const namePrefix = "#### "
 
 var (
-	shellPattern = regexp.MustCompile(`^(BUG|OK|N-I) +([^ :]+ +)?`)
+	shellPattern = regexp.MustCompile(`^(BUG|OK|N-I) ([^ :]+ )?`)
 	dashPattern  = regexp.MustCompile(`\bdash\b`)
 )
 
