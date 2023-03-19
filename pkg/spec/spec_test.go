@@ -62,7 +62,7 @@ func TestSpecs(t *testing.T) {
 
 func shouldRunSuite(name string) bool {
 	switch name {
-	case "oil/comments.test.sh", "oil/quote.test.sh":
+	case "oil/builtin-io.test.sh", "oil/comments.test.sh", "oil/quote.test.sh":
 		return true
 	default:
 		return false
