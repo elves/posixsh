@@ -4,21 +4,22 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
-func parseOilSpecFilesInFS(fs embed.FS, dir string) []spec {
+func parseOilSpecFilesInFS(fsys embed.FS) []spec {
 	var specs []spec
-	entries, _ := fs.ReadDir(dir)
-	for _, entry := range entries {
-		filename := path.Join(dir, entry.Name())
-		content, _ := fs.ReadFile(filename)
-		specs = append(specs, parseOilSpecFile(filename, string(content))...)
-	}
+	fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, _ error) error {
+		if !d.Type().IsDir() && strings.HasSuffix(path, ".test.sh") {
+			content, _ := fsys.ReadFile(path)
+			specs = append(specs, parseOilSpecFile(path, string(content))...)
+		}
+		return nil
+	})
 	return specs
 }
 

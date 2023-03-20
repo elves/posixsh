@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io"
 	"os"
+	"regexp"
 	"testing"
 
 	"github.com/elves/posixsh/pkg/eval"
@@ -24,16 +25,21 @@ type spec struct {
 	wantStderr []string
 }
 
-//go:embed oil/*.test.sh
-var oilFiles embed.FS
+//go:embed oil posix
+var specFiles embed.FS
 
-var specs = parseOilSpecFilesInFS(oilFiles, "oil")
+var specs = parseOilSpecFilesInFS(specFiles)
+
+var caseRegexp = regexp.MustCompile(`(?m)^case `)
 
 func TestSpecs(t *testing.T) {
 	for _, spec := range specs {
 		t.Run(spec.suite+"/"+spec.name, func(t *testing.T) {
 			if !shouldRunSuite(spec.suite) {
-				t.Skip()
+				t.Skip("skipping since suite is disabled")
+			}
+			if caseRegexp.MatchString(spec.code) {
+				t.Skip("skipping since code uses 'case'")
 			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()
@@ -54,7 +60,7 @@ func TestSpecs(t *testing.T) {
 
 func shouldRunSuite(name string) bool {
 	switch name {
-	case "oil/builtin-io.test.sh", "oil/comments.test.sh", "oil/quote.test.sh":
+	case "oil/comments.test.sh", "oil/quote.test.sh":
 		return true
 	default:
 		return false
