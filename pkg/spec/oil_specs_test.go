@@ -22,8 +22,6 @@ func parseOilSpecFilesInFS(fs embed.FS, dir string) []spec {
 	return specs
 }
 
-const namePrefix = "#### "
-
 var (
 	shellPattern = regexp.MustCompile(`^(BUG|OK|N-I) ([^ :]+ )?`)
 	dashPattern  = regexp.MustCompile(`\bdash\b`)
@@ -39,38 +37,45 @@ func parseOilSpecFile(filename, content string) []spec {
 	}
 	readMultiLine := func() string {
 		var b strings.Builder
-		for i++; i < len(lines) && lines[i] != "## END"; i++ {
+		for i++; i < len(lines) && !strings.HasPrefix(lines[i], "## "); i++ {
 			b.WriteString(lines[i])
 			b.WriteByte('\n')
+		}
+		// Make i point to the last line of the multi-line range.
+		if i < len(lines) && !strings.HasPrefix(lines[i], "## END") {
+			i--
 		}
 		return b.String()
 	}
 
-	// Skip empty and comment lines before the first spec
-	for ; i < len(lines) && !strings.HasPrefix(lines[i], namePrefix); i++ {
-		if lines[i] != "" && !strings.HasPrefix(lines[i], "#") {
-			warn("non-empty, non-comment line before first spec")
-		}
-	}
-
 	for i < len(lines) {
-		// At the start of each iteration, lines[i] is guaranteed start with namePrefix
+		// Skip to the name line
+		for ; i < len(lines) && !isName(lines[i]); i++ {
+			if isMetadata(lines[i]) {
+				warn("metadata line before spec")
+			} else if !isEmptyOrComment(lines[i]) {
+				warn("code line before spec")
+			}
+		}
+		if i == len(lines) {
+			break
+		}
 		name := lines[i][len(namePrefix):]
 		var codeBuilder strings.Builder
-		wantStatus := 0
-		checkStdout := false
-		wantStdout := ""
-		checkStderr := false
-		wantStderr := ""
+		var status []int
+		var stdout, stderr []string
 		skipSpec := false
-		for i++; i < len(lines) && !strings.HasPrefix(lines[i], namePrefix); i++ {
-			metadata, ok := cutPrefix(lines[i], "## ")
-			if !ok {
-				codeBuilder.WriteString(lines[i])
-				codeBuilder.WriteByte('\n')
+		// Parse code lines
+		for i++; i < len(lines) && !isName(lines[i]) && !isMetadata(lines[i]); i++ {
+			codeBuilder.WriteString(lines[i])
+			codeBuilder.WriteByte('\n')
+		}
+		// Parse metadata lines, possibly with comment lines
+		for ; i < len(lines) && (isMetadata(lines[i]) || isEmptyOrComment(lines[i])); i++ {
+			if isEmptyOrComment(lines[i]) {
 				continue
 			}
-
+			metadata := lines[i][len(metadataPrefix):]
 			annotation := shellPattern.FindStringSubmatch(metadata)
 			if annotation != nil {
 				metadata = metadata[len(annotation[0]):]
@@ -107,19 +112,17 @@ func parseOilSpecFile(filename, content string) []spec {
 				if err != nil {
 					warn("can't parse status as number")
 				} else {
-					wantStatus = i
+					status = append(status, i)
 				}
 			case "stdout":
-				checkStdout = true
-				wantStdout = value + "\n"
+				stdout = append(stdout, value+"\n")
 			case "stdout-json":
 				var s string
 				err := json.Unmarshal([]byte(value), &s)
 				if err != nil {
 					warn("can't parse stdout-json as JSON")
 				} else {
-					checkStdout = true
-					wantStdout = s
+					stdout = append(stdout, s)
 				}
 			case "stdout-repr":
 				if value[0] == '\'' {
@@ -130,33 +133,28 @@ func parseOilSpecFile(filename, content string) []spec {
 				if err != nil {
 					warn("can't parse status-repr")
 				} else {
-					checkStdout = true
-					wantStdout = s
+					stdout = append(stdout, s)
 				}
 			case "stderr":
-				checkStderr = true
-				wantStderr = value + "\n"
+				stderr = append(stderr, value+"\n")
 			case "stderr-json":
 				var s string
 				err := json.Unmarshal([]byte(value), &s)
 				if err != nil {
 					warn("can't parse stderr-json as JSON")
 				} else {
-					checkStderr = true
-					wantStderr = s
+					stderr = append(stderr, s)
 				}
 			case "STDOUT":
 				if value != "" {
 					warn("trailing content")
 				}
-				checkStdout = true
-				wantStdout = readMultiLine()
+				stdout = append(stdout, readMultiLine())
 			case "STDERR":
 				if value != "" {
 					warn("trailing content")
 				}
-				checkStderr = true
-				wantStderr = readMultiLine()
+				stderr = append(stderr, readMultiLine())
 			default:
 				warn("unknown key " + key)
 			}
@@ -164,16 +162,25 @@ func parseOilSpecFile(filename, content string) []spec {
 		if skipSpec {
 			continue
 		}
+		if len(status) == 0 {
+			status = []int{0}
+		}
 		specs = append(specs, spec{
 			filename, name, codeBuilder.String(),
-			wantStatus, checkStdout, wantStdout, checkStderr, wantStderr})
+			status, stdout, stderr})
 	}
 	return specs
 }
 
-func cutPrefix(s, prefix string) (string, bool) {
-	if strings.HasPrefix(s, prefix) {
-		return s[len(prefix):], true
-	}
-	return "", false
+const (
+	namePrefix     = "#### "
+	metadataPrefix = "## "
+)
+
+func isName(line string) bool     { return strings.HasPrefix(line, namePrefix) }
+func isMetadata(line string) bool { return strings.HasPrefix(line, metadataPrefix) }
+
+func isEmptyOrComment(line string) bool {
+	line = strings.TrimSpace(line)
+	return line == "" || (strings.HasPrefix(line, "#") && !isMetadata(line) && !isName(line))
 }

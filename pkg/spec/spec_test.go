@@ -17,11 +17,11 @@ type spec struct {
 	name  string
 	code  string
 
-	wantStatus  int
-	checkStdout bool
-	wantStdout  string
-	checkStderr bool
-	wantStderr  string
+	// No elements = don't check.
+	// Multiple elements = any one is OK.
+	wantStatus []int
+	wantStdout []string
+	wantStderr []string
 }
 
 //go:embed oil/*.test.sh
@@ -40,19 +40,11 @@ func TestSpecs(t *testing.T) {
 			ev := eval.NewEvaler(files)
 			status := ev.Eval(spec.code)
 			stdout, stderr := read()
-			if status != spec.wantStatus {
-				t.Errorf("got status %v, want %v", status, spec.wantStatus)
+			if len(spec.wantStatus) != 0 && !in(status, spec.wantStatus) {
+				t.Errorf("got status %v, want any of %v", status, spec.wantStatus)
 			}
-			if spec.checkStdout {
-				if diff := cmp.Diff(spec.wantStdout, stdout); diff != "" {
-					t.Errorf("stdout (-want+got):\n%v", diff)
-				}
-			}
-			if spec.checkStderr {
-				if diff := cmp.Diff(spec.wantStderr, stderr); diff != "" {
-					t.Errorf("stderr (-want+got):\n%v", diff)
-				}
-			}
+			testString(t, "stdout", stdout, spec.wantStdout)
+			testString(t, "stderr", stderr, spec.wantStderr)
 			if t.Failed() {
 				t.Logf("code is:\n%v", spec.code)
 			}
@@ -90,4 +82,23 @@ func outputPipe() (*os.File, func() string) {
 		w.Close()
 		return <-ch
 	}
+}
+
+func testString(t *testing.T, name, got string, want []string) {
+	t.Helper()
+	if len(want) == 0 || in(got, want) {
+		return
+	}
+	for i, want := range want {
+		t.Errorf("%v (-want%v +got):\n%v", name, i, cmp.Diff(want, got))
+	}
+}
+
+func in[T comparable](x T, ys []T) bool {
+	for _, y := range ys {
+		if x == y {
+			return true
+		}
+	}
+	return false
 }
