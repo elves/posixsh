@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/elves/posixsh/pkg/eval"
@@ -59,6 +60,9 @@ func TestSpecs(t *testing.T) {
 }
 
 func shouldRunSuite(name string) bool {
+	if strings.HasPrefix(name, "posix/") {
+		return true
+	}
 	switch name {
 	case "oil/comments.test.sh", "oil/quote.test.sh":
 		return true
