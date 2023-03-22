@@ -178,66 +178,64 @@ func (fm *frame) form(f *parse.Form) int {
 		}
 		return 0
 	}
-	if len(f.Redirs) > 0 {
-		for _, redir := range f.Redirs {
-			if redir.RightFd {
-				fmt.Fprintln(fm.files[2], ">& not supported yet")
-				continue
-			}
-			var flag, defaultDst int
-			switch redir.Mode {
-			case parse.RedirInput, parse.RedirHeredoc:
-				flag = os.O_RDONLY
-				defaultDst = 0
-			case parse.RedirOutput:
-				flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-				defaultDst = 1
-			case parse.RedirAppend:
-				flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-				defaultDst = 1
-			default:
-				fmt.Fprintln(fm.files[2], "unsupported redir", redir.Mode)
-				continue
-			}
-			var src *os.File
-			if redir.Mode == parse.RedirHeredoc {
-				r, w, err := os.Pipe()
-				if err != nil {
-					fmt.Fprintln(fm.files[2], "pipe:", err)
-					continue
-				}
-				content := redir.Heredoc.Value
-				go func() {
-					n, err := w.WriteString(content)
-					if n < len(content) {
-						fmt.Fprintln(fm.files[2], "short write", n, "<", len(content))
-					}
-					if err != nil {
-						fmt.Fprintln(fm.files[2], err)
-					}
-					w.Close()
-				}()
-				src = r
-			} else {
-				right := fm.compound(redir.Right)
-				f, err := os.OpenFile(right, flag, 0644)
-				if err != nil {
-					continue
-				}
-				src = f
-			}
-			dst := redir.Left
-			if dst == -1 {
-				dst = defaultDst
-			}
-			if dst >= len(fm.files) {
-				newFiles := make([]*os.File, dst+1)
-				copy(newFiles, fm.files)
-				fm.files = newFiles
-			}
-			fm.files[dst] = src
-			defer src.Close()
+	for _, redir := range f.Redirs {
+		if redir.RightFd {
+			fmt.Fprintln(fm.files[2], ">& not supported yet")
+			continue
 		}
+		var flag, defaultDst int
+		switch redir.Mode {
+		case parse.RedirInput, parse.RedirHeredoc:
+			flag = os.O_RDONLY
+			defaultDst = 0
+		case parse.RedirOutput:
+			flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+			defaultDst = 1
+		case parse.RedirAppend:
+			flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+			defaultDst = 1
+		default:
+			fmt.Fprintln(fm.files[2], "unsupported redir", redir.Mode)
+			continue
+		}
+		var src *os.File
+		if redir.Mode == parse.RedirHeredoc {
+			r, w, err := os.Pipe()
+			if err != nil {
+				fmt.Fprintln(fm.files[2], "pipe:", err)
+				continue
+			}
+			content := redir.Heredoc.Value
+			go func() {
+				n, err := w.WriteString(content)
+				if n < len(content) {
+					fmt.Fprintln(fm.files[2], "short write", n, "<", len(content))
+				}
+				if err != nil {
+					fmt.Fprintln(fm.files[2], err)
+				}
+				w.Close()
+			}()
+			src = r
+		} else {
+			right := fm.compound(redir.Right)
+			f, err := os.OpenFile(right, flag, 0644)
+			if err != nil {
+				continue
+			}
+			src = f
+		}
+		dst := redir.Left
+		if dst == -1 {
+			dst = defaultDst
+		}
+		if dst >= len(fm.files) {
+			newFiles := make([]*os.File, dst+1)
+			copy(newFiles, fm.files)
+			fm.files = newFiles
+		}
+		fm.files[dst] = src
+		defer src.Close()
 	}
 
 	// TODO: Temp assignment
