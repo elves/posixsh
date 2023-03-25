@@ -30,6 +30,8 @@ func newAST(name string) *ast {
 	return &ast{name: name}
 }
 
+var nodeTyp = reflect.TypeOf((*Node)(nil)).Elem()
+
 func toAST(n Node) *ast {
 	if n == nil || reflect.ValueOf(n).IsNil() {
 		return nil

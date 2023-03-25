@@ -5,7 +5,6 @@ package parse
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -164,15 +163,15 @@ func emptyWhitespaces(n Node) bool {
 
 // Shorthands for .parse calls.
 
-func (p *parser) iw() {
+func (p *parser) inlineWhitespace() {
 	parse(p, &Whitespaces{inline: true})
 }
 
-func (p *parser) w() {
+func (p *parser) whitespace() {
 	parse(p, &Whitespaces{})
 }
 
-func (p *parser) sw() {
+func (p *parser) whitespaceOrSemicolon() {
 	parse(p, &Whitespaces{semicolon: true})
 }
 
@@ -186,118 +185,4 @@ func (p *parser) maybeMeta(meta string) bool {
 		return true
 	}
 	return false
-}
-
-// Parse error.
-
-type Error struct {
-	Errors []ErrorEntry
-}
-
-func (err Error) Error() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%v parse errors: ", len(err.Errors))
-	for i, e := range err.Errors {
-		if i > 0 {
-			b.WriteString("; ")
-		}
-		fmt.Fprintf(&b, "%v: %v", e.Position, e.Message)
-	}
-	return b.String()
-}
-
-type ErrorEntry struct {
-	Position int
-	Message  string
-}
-
-type Node interface {
-	Begin() int
-	End() int
-	Parent() Node
-	Children() []Node
-
-	setBegin(int)
-	setEnd(int)
-	setParent(Node)
-	addChild(Node)
-	parseInner(*parser)
-}
-
-type node struct {
-	begin    int
-	end      int
-	parent   Node
-	children []Node
-}
-
-var nodeTyp = reflect.TypeOf((*Node)(nil)).Elem()
-
-func (n *node) Begin() int       { return n.begin }
-func (n *node) setBegin(i int)   { n.begin = i }
-func (n *node) End() int         { return n.end }
-func (n *node) setEnd(i int)     { n.end = i }
-func (n *node) Parent() Node     { return n.parent }
-func (n *node) setParent(m Node) { n.parent = m }
-func (n *node) Children() []Node { return n.children }
-func (n *node) addChild(m Node)  { n.children = append(n.children, m) }
-
-const (
-	inlineWhitespaceSet = " \t\r"
-	whitespaceSet       = inlineWhitespaceSet + "\n"
-)
-
-// Whitespaces is a leaf Node made up of a run of zero or more whitespace
-// characters.
-type Whitespaces struct {
-	node
-	inline    bool
-	semicolon bool
-}
-
-func (w *Whitespaces) parseInner(p *parser) {
-	consumeWhitespacesAndComment(p, inlineWhitespaceSet, w.semicolon)
-	if w.inline {
-		return
-	}
-	if !p.consumePrefix("\n") {
-		return
-	}
-	for _, pending := range p.pendingHeredocs {
-		parse(p, pending)
-	}
-	p.pendingHeredocs = nil
-	consumeWhitespacesAndComment(p, whitespaceSet, w.semicolon)
-}
-
-func consumeWhitespacesAndComment(p *parser, set string, semicolon bool) {
-	if semicolon {
-		set += ";"
-	}
-	comment := false
-	p.consumeWhile(func(r rune) bool {
-		if r == '#' {
-			comment = true
-		} else if r == '\n' {
-			comment = false
-		}
-		return comment || runeIn(r, set)
-	})
-}
-
-type Meta struct {
-	node
-	meta string
-}
-
-func (mt *Meta) parseInner(p *parser) {
-	if p.hasPrefix(mt.meta) {
-		p.consume(len(mt.meta))
-	} else {
-		p.errorf("missing meta symbol %q", mt.meta)
-	}
-}
-
-func runeIn(r rune, set string) bool {
-	return strings.ContainsRune(set, r)
 }

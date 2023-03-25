@@ -33,10 +33,10 @@ var commandStopper = " \t\r\n;)}&|"
 
 // Chunk = sw { AndOr sw }
 func (ch *Chunk) parseInner(p *parser) {
-	p.sw()
+	p.whitespaceOrSemicolon()
 	for p.mayParseCommand() {
 		addTo(&ch.AndOrs, parse(p, &AndOr{}))
-		p.sw()
+		p.whitespaceOrSemicolon()
 	}
 }
 
@@ -49,7 +49,7 @@ type AndOr struct {
 // AndOr = Pipeline iw { ("&&" | "||") w Pipeline iw }
 func (ao *AndOr) parseInner(p *parser) {
 	addTo(&ao.Pipelines, parse(p, &Pipeline{}))
-	p.iw()
+	p.inlineWhitespace()
 	for {
 		// NOTE: Should be meta
 		op := p.consumePrefixIn("&&", "||")
@@ -57,9 +57,9 @@ func (ao *AndOr) parseInner(p *parser) {
 			break
 		}
 		ao.AndOp = append(ao.AndOp, op == "&&")
-		p.w()
+		p.whitespace()
 		addTo(&ao.Pipelines, parse(p, &Pipeline{}))
-		p.iw()
+		p.inlineWhitespace()
 	}
 }
 
@@ -71,13 +71,13 @@ type Pipeline struct {
 // Pipeline = Form iw { ("|" \ "||") w Form iw }
 func (pp *Pipeline) parseInner(p *parser) {
 	addTo(&pp.Forms, parse(p, &Form{}))
-	p.iw()
+	p.inlineWhitespace()
 	for p.hasPrefix("|") && !p.hasPrefix("||") {
 		// | should be meta
 		p.consumePrefix("|")
-		p.w()
+		p.whitespace()
 		addTo(&pp.Forms, parse(p, &Form{}))
-		p.iw()
+		p.inlineWhitespace()
 	}
 }
 
@@ -108,7 +108,7 @@ var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
 //	| w { Assign iw } { ( Redir | Compound ) iw }
 //	| w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
 func (fm *Form) parseInner(p *parser) {
-	p.w()
+	p.whitespace()
 	if p.hasPrefixIn("(", "{") != "" {
 		fm.Type = CompoundCommandForm
 		fm.Body = parse(p, &CompoundCommand{})
@@ -117,7 +117,7 @@ func (fm *Form) parseInner(p *parser) {
 	fm.Type = NormalForm
 	if assignPattern.MatchString(p.rest()) {
 		addTo(&fm.Assigns, parse(p, &Assign{}))
-		p.iw()
+		p.inlineWhitespace()
 	}
 items:
 	for {
@@ -130,12 +130,12 @@ items:
 		default:
 			break items
 		}
-		p.iw()
+		p.inlineWhitespace()
 	}
 	if p.maybeMeta("(") {
 		fm.Type = FnDefinitionForm
 		// Parse a function definition.
-		p.iw()
+		p.inlineWhitespace()
 		p.meta(")")
 		fm.Body = parse(p, &CompoundCommand{})
 	}
@@ -240,14 +240,14 @@ func (rd *Redir) parseInner(p *parser) {
 		p.errorf("missing redirection symbol, assuming <")
 		rd.Mode = RedirInput
 	}
-	p.w()
+	p.whitespace()
 	if p.maybeMeta("&") {
 		if rd.Mode == RedirHeredoc {
 			p.errorf("<<& is not allowed, ignoring &")
 		} else {
 			rd.RightFd = true
 		}
-		p.w()
+		p.whitespace()
 	}
 	rd.Right = parse(p, &Compound{})
 	if rd.Mode == RedirHeredoc {
@@ -285,7 +285,7 @@ type CompoundCommand struct {
 //
 //	| w '(' Chunk w ')'
 func (cc *CompoundCommand) parseInner(p *parser) {
-	p.w()
+	p.whitespace()
 	closer := ""
 	switch {
 	case p.maybeMeta("("):
