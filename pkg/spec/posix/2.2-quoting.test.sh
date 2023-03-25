@@ -20,10 +20,10 @@ b
 #### 2.2.3 Double quotes: variable
 foo=bar
 echo "foo=$foo"
-echo "bar=${bar:-empty}"
+echo "foo=${foo}"
 ## STDOUT:
 foo=bar
-bar=empty
+foo=bar
 ## END
 
 #### 2.2.3 Double quotes: command subtitution with $

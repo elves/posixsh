@@ -54,6 +54,9 @@ func TestSpecs(t *testing.T) {
 			testString(t, "stderr", stderr, spec.wantStderr)
 			if t.Failed() {
 				t.Logf("code is:\n%v", spec.code)
+				if len(spec.wantStderr) == 0 && stderr != "" {
+					t.Logf("stderr is:\n%v", stderr)
+				}
 			}
 		})
 	}

@@ -424,10 +424,15 @@ start:
 		}
 	case p.consumeRuneIn("[]*?") != "":
 		pr.Type = WildcardCharPrimary
+	case p.consumePrefix("`"):
+		pr.Type = OutputCapturePrimary
+		p.parseInto(&pr.Body, &Chunk{})
+		if !p.consumePrefix("`") {
+			p.errorf("missing closing backquote for output capture")
+		}
 	case p.consumePrefix("$("):
 		pr.Type = OutputCapturePrimary
 		p.parseInto(&pr.Body, &Chunk{})
-		p.sw()
 		if !p.consumePrefix(")") {
 			p.errorf("missing closing paranthesis for output capture")
 		}
@@ -562,7 +567,6 @@ func (va *Variable) parseInner(p *parser) {
 	if !p.consumePrefix("}") {
 		p.errorf("missing } to match {")
 	}
-	return
 }
 
 func parseVariableName(p *parser, brace bool) string {
