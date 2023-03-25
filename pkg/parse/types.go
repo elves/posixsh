@@ -138,7 +138,9 @@ func (p *parser) skipInvalid() {
 
 // Common parsing logic.
 
-func (p *parser) parse(n Node) {
+func addTo[T any](ptr *[]T, v T) { *ptr = append(*ptr, v) }
+
+func parse[N Node](p *parser, n N) N {
 	n.setBegin(p.pos)
 	p.stack = append(p.stack, n)
 
@@ -152,6 +154,7 @@ func (p *parser) parse(n Node) {
 		parent.addChild(n)
 		n.setParent(parent)
 	}
+	return n
 }
 
 func emptyWhitespaces(n Node) bool {
@@ -159,34 +162,22 @@ func emptyWhitespaces(n Node) bool {
 	return ok && w.begin == w.end
 }
 
-func (p *parser) parseInto(ptr interface{}, n Node) {
-	p.parse(n)
-	dst := reflect.ValueOf(ptr).Elem()
-	if dst.Type().AssignableTo(nodeTyp) {
-		// Assume that ptr is of type *T, where T < Node
-		dst.Set(reflect.ValueOf(n))
-	} else {
-		// Assume that ptr is of type *[]T, where T < Node
-		dst.Set(reflect.Append(dst, reflect.ValueOf(n)))
-	}
-}
-
 // Shorthands for .parse calls.
 
 func (p *parser) iw() {
-	p.parse(&Whitespaces{inline: true})
+	parse(p, &Whitespaces{inline: true})
 }
 
 func (p *parser) w() {
-	p.parse(&Whitespaces{})
+	parse(p, &Whitespaces{})
 }
 
 func (p *parser) sw() {
-	p.parse(&Whitespaces{semicolon: true})
+	parse(p, &Whitespaces{semicolon: true})
 }
 
 func (p *parser) meta(meta string) {
-	p.parse(&Meta{meta: meta})
+	parse(p, &Meta{meta: meta})
 }
 
 func (p *parser) maybeMeta(meta string) bool {
@@ -273,7 +264,7 @@ func (w *Whitespaces) parseInner(p *parser) {
 		return
 	}
 	for _, pending := range p.pendingHeredocs {
-		p.parse(pending)
+		parse(p, pending)
 	}
 	p.pendingHeredocs = nil
 	consumeWhitespacesAndComment(p, whitespaceSet, w.semicolon)

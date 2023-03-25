@@ -14,7 +14,7 @@ import (
 func Parse(text string) (*Chunk, error) {
 	p := newParser(text)
 	n := &Chunk{}
-	p.parse(n)
+	parse(p, n)
 	if p.rest() != "" {
 		p.errorf("unparsed code")
 	}
@@ -35,7 +35,7 @@ var commandStopper = " \t\r\n;)}&|"
 func (ch *Chunk) parseInner(p *parser) {
 	p.sw()
 	for p.mayParseCommand() {
-		p.parseInto(&ch.AndOrs, &AndOr{})
+		addTo(&ch.AndOrs, parse(p, &AndOr{}))
 		p.sw()
 	}
 }
@@ -48,7 +48,7 @@ type AndOr struct {
 
 // AndOr = Pipeline iw { ("&&" | "||") w Pipeline iw }
 func (ao *AndOr) parseInner(p *parser) {
-	p.parseInto(&ao.Pipelines, &Pipeline{})
+	addTo(&ao.Pipelines, parse(p, &Pipeline{}))
 	p.iw()
 	for {
 		// NOTE: Should be meta
@@ -58,7 +58,7 @@ func (ao *AndOr) parseInner(p *parser) {
 		}
 		ao.AndOp = append(ao.AndOp, op == "&&")
 		p.w()
-		p.parseInto(&ao.Pipelines, &Pipeline{})
+		addTo(&ao.Pipelines, parse(p, &Pipeline{}))
 		p.iw()
 	}
 }
@@ -70,13 +70,13 @@ type Pipeline struct {
 
 // Pipeline = Form iw { ("|" \ "||") w Form iw }
 func (pp *Pipeline) parseInner(p *parser) {
-	p.parseInto(&pp.Forms, &Form{})
+	addTo(&pp.Forms, parse(p, &Form{}))
 	p.iw()
 	for p.hasPrefix("|") && !p.hasPrefix("||") {
 		// | should be meta
 		p.consumePrefix("|")
 		p.w()
-		p.parseInto(&pp.Forms, &Form{})
+		addTo(&pp.Forms, parse(p, &Form{}))
 		p.iw()
 	}
 }
@@ -111,12 +111,12 @@ func (fm *Form) parseInner(p *parser) {
 	p.w()
 	if p.hasPrefixIn("(", "{") != "" {
 		fm.Type = CompoundCommandForm
-		p.parseInto(&fm.Body, &CompoundCommand{})
+		fm.Body = parse(p, &CompoundCommand{})
 		return
 	}
 	fm.Type = NormalForm
 	if assignPattern.MatchString(p.rest()) {
-		p.parseInto(&fm.Assigns, &Assign{})
+		addTo(&fm.Assigns, parse(p, &Assign{}))
 		p.iw()
 	}
 items:
@@ -124,9 +124,9 @@ items:
 		restPastDigits := strings.TrimLeft(p.rest(), digitSet)
 		switch {
 		case hasPrefix(restPastDigits, "<"), hasPrefix(restPastDigits, ">"):
-			p.parseInto(&fm.Redirs, &Redir{})
+			addTo(&fm.Redirs, parse(p, &Redir{}))
 		case p.mayParseExpr():
-			p.parseInto(&fm.Words, &Compound{})
+			addTo(&fm.Words, parse(p, &Compound{}))
 		default:
 			break items
 		}
@@ -137,7 +137,7 @@ items:
 		// Parse a function definition.
 		p.iw()
 		p.meta(")")
-		p.parseInto(&fm.Body, &CompoundCommand{})
+		fm.Body = parse(p, &CompoundCommand{})
 	}
 }
 
@@ -156,7 +156,7 @@ func (as *Assign) parseInner(p *parser) {
 		as.LHS = "_"
 	}
 	as.LHS = s[:len(s)-1]
-	p.parseInto(&as.RHS, &Compound{})
+	as.RHS = parse(p, &Compound{})
 }
 
 type Heredoc struct {
@@ -249,7 +249,7 @@ func (rd *Redir) parseInner(p *parser) {
 		}
 		p.w()
 	}
-	p.parseInto(&rd.Right, &Compound{})
+	rd.Right = parse(p, &Compound{})
 	if rd.Mode == RedirHeredoc {
 		delim, quoted := parseHeredocDelim(p, rd.Right)
 		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted}
@@ -296,7 +296,7 @@ func (cc *CompoundCommand) parseInner(p *parser) {
 	default:
 		p.errorf("missing '{' or '(' for compound command")
 	}
-	p.parseInto(&cc.Body, &Chunk{})
+	cc.Body = parse(p, &Chunk{})
 	if closer != "" {
 		p.meta(closer)
 	}
@@ -318,7 +318,7 @@ func (cp *Compound) parseInner(p *parser) {
 		cp.TildePrefix = prefix
 	}
 	for p.mayParseExpr() {
-		p.parseInto(&cp.Parts, &Primary{})
+		addTo(&cp.Parts, parse(p, &Primary{}))
 	}
 }
 
@@ -417,7 +417,7 @@ start:
 	case p.consumePrefix(`"`):
 		pr.Type = DoubleQuotedPrimary
 		for !p.eof() && !p.consumePrefix(`"`) {
-			p.parseInto(&pr.DQSegments, &DQSegment{})
+			addTo(&pr.DQSegments, parse(p, &DQSegment{}))
 		}
 		if p.eof() {
 			p.errorf("unterminated double-quoted string")
@@ -426,20 +426,20 @@ start:
 		pr.Type = WildcardCharPrimary
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
-		p.parseInto(&pr.Body, &Chunk{})
+		pr.Body = parse(p, &Chunk{})
 		if !p.consumePrefix("`") {
 			p.errorf("missing closing backquote for output capture")
 		}
 	case p.consumePrefix("$("):
 		pr.Type = OutputCapturePrimary
-		p.parseInto(&pr.Body, &Chunk{})
+		pr.Body = parse(p, &Chunk{})
 		if !p.consumePrefix(")") {
 			p.errorf("missing closing paranthesis for output capture")
 		}
 	case p.consumePrefix("$"):
 		if p.nextIn(variableInitialSet) {
 			pr.Type = VariablePrimary
-			p.parseInto(&pr.Variable, &Variable{})
+			pr.Variable = parse(p, &Variable{})
 		} else {
 			// If a variable can't be parsed, it's not an error but a bareword.
 			pr.Type = BarewordPrimary
@@ -476,7 +476,7 @@ var (
 func (dq *DQSegment) parseInner(p *parser) {
 	if p.hasPrefixIn("$", "`") != "" {
 		dq.Type = DQExpansionSegment
-		p.parseInto(&dq.Expansion, &Primary{})
+		dq.Expansion = parse(p, &Primary{})
 	} else {
 		dq.Type = DQStringSegment
 		// Optimization: Consume a prefix that does not contain backslashes.
@@ -562,7 +562,7 @@ func (va *Variable) parseInner(p *parser) {
 		va.Name = parseVariableName(p, true)
 	}
 	if p.hasPrefixNot("}") {
-		p.parseInto(&va.Modifier, &Modifier{})
+		va.Modifier = parse(p, &Modifier{})
 	}
 	if !p.consumePrefix("}") {
 		p.errorf("missing } to match {")
@@ -611,7 +611,7 @@ func (md *Modifier) parseInner(p *parser) {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
-	p.parseInto(&md.Argument, &Compound{})
+	md.Argument = parse(p, &Compound{})
 }
 
 // Lookahead.
