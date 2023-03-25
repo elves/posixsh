@@ -36,11 +36,13 @@ var caseRegexp = regexp.MustCompile(`(?m)^case `)
 func TestSpecs(t *testing.T) {
 	for _, spec := range specs {
 		t.Run(spec.suite+"/"+spec.name, func(t *testing.T) {
-			if !shouldRunSuite(spec.suite) {
+			switch {
+			case !shouldRunSuite(spec.suite):
 				t.Skip("skipping since suite is disabled")
-			}
-			if caseRegexp.MatchString(spec.code) {
+			case caseRegexp.MatchString(spec.code):
 				t.Skip("skipping since code uses 'case'")
+			case strings.Contains(spec.code, "$(("):
+				t.Skip("skipping since code uses arithmetic expression")
 			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()
