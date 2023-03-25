@@ -14,7 +14,7 @@ type parser struct {
 	orig string
 	// Text with \<newline> removed.
 	text string
-	// Occurances of line continuations, as indicies into text. This is useful
+	// Occurrences of line continuations, as indices into text. This is useful
 	// when recovering the real position when reporting error or parsing
 	// single-quoted strings ( which is the only place where \<newline> does not
 	// function as line continuation).
@@ -139,11 +139,16 @@ func (p *parser) skipInvalid() {
 
 func addTo[T any](ptr *[]T, v T) { *ptr = append(*ptr, v) }
 
-func parse[N Node](p *parser, n N) N {
+type parseNode[O any] interface {
+	Node
+	parse(*parser, O)
+}
+
+func parse[O any, N parseNode[O]](p *parser, n N, opt O) N {
 	n.setBegin(p.pos)
 	p.stack = append(p.stack, n)
 
-	n.parseInner(p)
+	n.parse(p, opt)
 
 	n.setEnd(p.pos)
 	p.stack[len(p.stack)-1] = nil
@@ -156,27 +161,31 @@ func parse[N Node](p *parser, n N) N {
 	return n
 }
 
+func parseNoOpt[N parseNode[struct{}]](p *parser, n N) N {
+	return parse(p, n, struct{}{})
+}
+
 func emptyWhitespaces(n Node) bool {
 	w, ok := n.(*Whitespaces)
 	return ok && w.begin == w.end
 }
 
-// Shorthands for .parse calls.
+// Shorthands for parse calls.
 
 func (p *parser) inlineWhitespace() {
-	parse(p, &Whitespaces{inline: true})
+	parseNoOpt(p, &InlineWhitespaces{})
 }
 
 func (p *parser) whitespace() {
-	parse(p, &Whitespaces{})
+	parse(p, &Whitespaces{}, whitespacesOpt(0))
 }
 
 func (p *parser) whitespaceOrSemicolon() {
-	parse(p, &Whitespaces{semicolon: true})
+	parse(p, &Whitespaces{}, semicolonIsWhitespace)
 }
 
 func (p *parser) meta(meta string) {
-	parse(p, &Meta{meta: meta})
+	parse(p, &Meta{}, meta)
 }
 
 func (p *parser) maybeMeta(meta string) bool {

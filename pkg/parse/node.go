@@ -10,7 +10,6 @@ type Node interface {
 	setEnd(int)
 	setParent(Node)
 	addChild(Node)
-	parseInner(*parser)
 }
 
 type node struct {
@@ -34,27 +33,35 @@ const (
 	whitespaceSet       = inlineWhitespaceSet + "\n"
 )
 
-// Whitespaces is a leaf Node made up of a run of zero or more whitespace
-// characters.
-type Whitespaces struct {
-	node
-	inline    bool
-	semicolon bool
+// InlineWhitespaces is a leaf Node made up of a run of zero or more inline
+// whitespace characters.
+type InlineWhitespaces struct{ node }
+
+func (iw *InlineWhitespaces) parse(p *parser, _ struct{}) {
+	consumeWhitespacesAndComment(p, inlineWhitespaceSet, false)
 }
 
-func (w *Whitespaces) parseInner(p *parser) {
-	consumeWhitespacesAndComment(p, inlineWhitespaceSet, w.semicolon)
-	if w.inline {
-		return
-	}
+// Whitespaces is a leaf Node made up of a run of zero or more whitespace
+// characters.
+type Whitespaces struct{ node }
+
+type whitespacesOpt uint
+
+const (
+	semicolonIsWhitespace whitespacesOpt = 1 << iota
+)
+
+func (w *Whitespaces) parse(p *parser, opt whitespacesOpt) {
+	semicolon := opt&semicolonIsWhitespace != 0
+	consumeWhitespacesAndComment(p, inlineWhitespaceSet, semicolon)
 	if !p.consumePrefix("\n") {
 		return
 	}
 	for _, pending := range p.pendingHeredocs {
-		parse(p, pending)
+		parseNoOpt(p, pending)
 	}
 	p.pendingHeredocs = nil
-	consumeWhitespacesAndComment(p, whitespaceSet, w.semicolon)
+	consumeWhitespacesAndComment(p, whitespaceSet, semicolon)
 }
 
 func consumeWhitespacesAndComment(p *parser, set string, semicolon bool) {
@@ -72,15 +79,12 @@ func consumeWhitespacesAndComment(p *parser, set string, semicolon bool) {
 	})
 }
 
-type Meta struct {
-	node
-	meta string
-}
+type Meta struct{ node }
 
-func (mt *Meta) parseInner(p *parser) {
-	if p.hasPrefix(mt.meta) {
-		p.consume(len(mt.meta))
+func (mt *Meta) parse(p *parser, meta string) {
+	if p.hasPrefix(meta) {
+		p.consume(len(meta))
 	} else {
-		p.errorf("missing meta symbol %q", mt.meta)
+		p.errorf("missing meta symbol %q", meta)
 	}
 }

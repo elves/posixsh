@@ -1,4 +1,4 @@
-// Package parse implements parsing of POSIX shell scripts.
+// Package parseNoOpt implements parsing of POSIX shell scripts.
 package parse
 
 //go:generate stringer -type=RedirMode,PrimaryType,DQSegmentType -output=string.go
@@ -14,7 +14,7 @@ import (
 func Parse(text string) (*Chunk, error) {
 	p := newParser(text)
 	n := &Chunk{}
-	parse(p, n)
+	parse(p, n, nodeOpt(0))
 	if p.rest() != "" {
 		p.errorf("unparsed code")
 	}
@@ -29,13 +29,20 @@ type Chunk struct {
 	AndOrs []*AndOr
 }
 
-var commandStopper = " \t\r\n;)}&|"
+var commandStopper = " ;)}&|"
+
+type nodeOpt uint
+
+const (
+	// In backquotes, and not in a bracketed construct within.
+	inBackquotes nodeOpt = 1 << iota
+)
 
 // Chunk = sw { AndOr sw }
-func (ch *Chunk) parseInner(p *parser) {
+func (ch *Chunk) parse(p *parser, opt nodeOpt) {
 	p.whitespaceOrSemicolon()
-	for p.mayParseCommand() {
-		addTo(&ch.AndOrs, parse(p, &AndOr{}))
+	for p.mayParseCommand(opt) {
+		addTo(&ch.AndOrs, parse(p, &AndOr{}, opt))
 		p.whitespaceOrSemicolon()
 	}
 }
@@ -47,8 +54,8 @@ type AndOr struct {
 }
 
 // AndOr = Pipeline iw { ("&&" | "||") w Pipeline iw }
-func (ao *AndOr) parseInner(p *parser) {
-	addTo(&ao.Pipelines, parse(p, &Pipeline{}))
+func (ao *AndOr) parse(p *parser, opt nodeOpt) {
+	addTo(&ao.Pipelines, parse(p, &Pipeline{}, opt))
 	p.inlineWhitespace()
 	for {
 		// NOTE: Should be meta
@@ -58,7 +65,7 @@ func (ao *AndOr) parseInner(p *parser) {
 		}
 		ao.AndOp = append(ao.AndOp, op == "&&")
 		p.whitespace()
-		addTo(&ao.Pipelines, parse(p, &Pipeline{}))
+		addTo(&ao.Pipelines, parse(p, &Pipeline{}, opt))
 		p.inlineWhitespace()
 	}
 }
@@ -69,14 +76,14 @@ type Pipeline struct {
 }
 
 // Pipeline = Form iw { ("|" \ "||") w Form iw }
-func (pp *Pipeline) parseInner(p *parser) {
-	addTo(&pp.Forms, parse(p, &Form{}))
+func (pp *Pipeline) parse(p *parser, opt nodeOpt) {
+	addTo(&pp.Forms, parse(p, &Form{}, opt))
 	p.inlineWhitespace()
 	for p.hasPrefix("|") && !p.hasPrefix("||") {
 		// | should be meta
 		p.consumePrefix("|")
 		p.whitespace()
-		addTo(&pp.Forms, parse(p, &Form{}))
+		addTo(&pp.Forms, parse(p, &Form{}, opt))
 		p.inlineWhitespace()
 	}
 }
@@ -107,16 +114,16 @@ var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
 //
 //	| w { Assign iw } { ( Redir | Compound ) iw }
 //	| w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
-func (fm *Form) parseInner(p *parser) {
+func (fm *Form) parse(p *parser, opt nodeOpt) {
 	p.whitespace()
 	if p.hasPrefixIn("(", "{") != "" {
 		fm.Type = CompoundCommandForm
-		fm.Body = parse(p, &CompoundCommand{})
+		fm.Body = parse(p, &CompoundCommand{}, opt)
 		return
 	}
 	fm.Type = NormalForm
 	if assignPattern.MatchString(p.rest()) {
-		addTo(&fm.Assigns, parse(p, &Assign{}))
+		addTo(&fm.Assigns, parse(p, &Assign{}, opt))
 		p.inlineWhitespace()
 	}
 items:
@@ -124,9 +131,9 @@ items:
 		restPastDigits := strings.TrimLeft(p.rest(), digitSet)
 		switch {
 		case hasPrefix(restPastDigits, "<"), hasPrefix(restPastDigits, ">"):
-			addTo(&fm.Redirs, parse(p, &Redir{}))
-		case p.mayParseExpr():
-			addTo(&fm.Words, parse(p, &Compound{}))
+			addTo(&fm.Redirs, parse(p, &Redir{}, opt))
+		case p.mayParseExpr(opt):
+			addTo(&fm.Words, parse(p, &Compound{}, opt))
 		default:
 			break items
 		}
@@ -137,7 +144,7 @@ items:
 		// Parse a function definition.
 		p.inlineWhitespace()
 		p.meta(")")
-		fm.Body = parse(p, &CompoundCommand{})
+		fm.Body = parse(p, &CompoundCommand{}, opt)
 	}
 }
 
@@ -148,7 +155,7 @@ type Assign struct {
 }
 
 // Assign := `[a-zA-Z_][a-zA-Z0-9_]*` "=" Compound
-func (as *Assign) parseInner(p *parser) {
+func (as *Assign) parse(p *parser, opt nodeOpt) {
 	s := assignPattern.FindString(p.rest())
 	p.consume(len(s))
 	if s == "" {
@@ -156,7 +163,7 @@ func (as *Assign) parseInner(p *parser) {
 		as.LHS = "_"
 	}
 	as.LHS = s[:len(s)-1]
-	as.RHS = parse(p, &Compound{})
+	as.RHS = parse(p, &Compound{}, opt)
 }
 
 type Heredoc struct {
@@ -166,9 +173,9 @@ type Heredoc struct {
 	Value  string
 }
 
-// This function is called in (*Whitespaces).parseInner immediately after a \n,
+// This function is called in (*Whitespaces).parseNoOpt immediately after a \n,
 // for each pending Heredoc.
-func (hd *Heredoc) parseInner(p *parser) {
+func (hd *Heredoc) parse(p *parser, _ struct{}) {
 	begin := p.pos
 	for i := p.pos; i < len(p.text); {
 		j := i + strings.IndexByte(p.text[i:], '\n')
@@ -211,7 +218,7 @@ const (
 )
 
 // Redir = `[0-9]*` (">>" | "<>" | ">" | "<" | "<<") w [ "&" w ] Compound
-func (rd *Redir) parseInner(p *parser) {
+func (rd *Redir) parse(p *parser, opt nodeOpt) {
 	left := p.consumeWhileIn(digitSet)
 	if left == "" {
 		rd.Left = -1
@@ -249,7 +256,7 @@ func (rd *Redir) parseInner(p *parser) {
 		}
 		p.whitespace()
 	}
-	rd.Right = parse(p, &Compound{})
+	rd.Right = parse(p, &Compound{}, opt)
 	if rd.Mode == RedirHeredoc {
 		delim, quoted := parseHeredocDelim(p, rd.Right)
 		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted}
@@ -284,7 +291,7 @@ type CompoundCommand struct {
 // CompoundCommand = w '{' Chunk w '}'
 //
 //	| w '(' Chunk w ')'
-func (cc *CompoundCommand) parseInner(p *parser) {
+func (cc *CompoundCommand) parse(p *parser, opt nodeOpt) {
 	p.whitespace()
 	closer := ""
 	switch {
@@ -296,7 +303,7 @@ func (cc *CompoundCommand) parseInner(p *parser) {
 	default:
 		p.errorf("missing '{' or '(' for compound command")
 	}
-	cc.Body = parse(p, &Chunk{})
+	cc.Body = parse(p, &Chunk{}, opt&^inBackquotes)
 	if closer != "" {
 		p.meta(closer)
 	}
@@ -309,16 +316,16 @@ type Compound struct {
 	Parts       []*Primary
 }
 
-var exprStopper = commandStopper + "<>("
+var exprStopper = commandStopper + " \t\r\n<>("
 
-func (cp *Compound) parseInner(p *parser) {
+func (cp *Compound) parse(p *parser, opt nodeOpt) {
 	// TODO: Parse TildePrefix correctly in assignment RHS
 	if prefix := findTildePrefix(p.rest()); prefix != "" {
 		p.consume(len(prefix))
 		cp.TildePrefix = prefix
 	}
-	for p.mayParseExpr() {
-		addTo(&cp.Parts, parse(p, &Primary{}))
+	for p.mayParseExpr(opt) {
+		addTo(&cp.Parts, parse(p, &Primary{}, opt))
 	}
 }
 
@@ -365,11 +372,11 @@ const (
 )
 
 var (
-	barewordStopper    = exprStopper + "'\"$[]?*{"
+	barewordStopper    = exprStopper + "'\"$`[]?*{"
 	rawBarewordStopper = barewordStopper + "\\"
 )
 
-func (pr *Primary) parseInner(p *parser) {
+func (pr *Primary) parse(p *parser, opt nodeOpt) {
 start:
 	switch {
 	case p.nextInCompl(barewordStopper):
@@ -417,7 +424,7 @@ start:
 	case p.consumePrefix(`"`):
 		pr.Type = DoubleQuotedPrimary
 		for !p.eof() && !p.consumePrefix(`"`) {
-			addTo(&pr.DQSegments, parse(p, &DQSegment{}))
+			addTo(&pr.DQSegments, parse(p, &DQSegment{}, opt))
 		}
 		if p.eof() {
 			p.errorf("unterminated double-quoted string")
@@ -426,20 +433,20 @@ start:
 		pr.Type = WildcardCharPrimary
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
-		pr.Body = parse(p, &Chunk{})
+		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
 		if !p.consumePrefix("`") {
 			p.errorf("missing closing backquote for output capture")
 		}
 	case p.consumePrefix("$("):
 		pr.Type = OutputCapturePrimary
-		pr.Body = parse(p, &Chunk{})
+		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
 		if !p.consumePrefix(")") {
 			p.errorf("missing closing paranthesis for output capture")
 		}
 	case p.consumePrefix("$"):
 		if p.nextIn(variableInitialSet) {
 			pr.Type = VariablePrimary
-			pr.Variable = parse(p, &Variable{})
+			pr.Variable = parse(p, &Variable{}, opt)
 		} else {
 			// If a variable can't be parsed, it's not an error but a bareword.
 			pr.Type = BarewordPrimary
@@ -473,28 +480,29 @@ var (
 	rawDQStringSegmentStopper = dqStringSegmentStopper + "\\"
 )
 
-func (dq *DQSegment) parseInner(p *parser) {
+func (dq *DQSegment) parse(p *parser, opt nodeOpt) {
 	if p.hasPrefixIn("$", "`") != "" {
 		dq.Type = DQExpansionSegment
-		dq.Expansion = parse(p, &Primary{})
+		dq.Expansion = parse(p, &Primary{}, opt&^inBackquotes)
 	} else {
 		dq.Type = DQStringSegment
 		// Optimization: Consume a prefix that does not contain backslashes.
-		// This avoid building a bytes.Buffer when this segment is free of
+		// This avoids building a bytes.Buffer when this segment is free of
 		// backslashes.
 		raw := p.consumeWhileNotIn(rawDQStringSegmentStopper)
 		if !p.hasPrefix("\\") {
 			dq.Value = raw
 			return
 		}
-		buf := bytes.NewBufferString(raw)
+		var b strings.Builder
+		b.WriteString(raw)
 		lastBackslash := false
 		p.consumeWhile(func(r rune) bool {
 			if lastBackslash {
 				if !runeIn(r, rawDQStringSegmentStopper) {
-					buf.WriteRune('\\')
+					b.WriteRune('\\')
 				}
-				buf.WriteRune(r)
+				b.WriteRune(r)
 				lastBackslash = false
 				return true
 			} else if r == '\\' {
@@ -503,11 +511,11 @@ func (dq *DQSegment) parseInner(p *parser) {
 			} else if runeIn(r, dqStringSegmentStopper) {
 				return false
 			} else {
-				buf.WriteRune(r)
+				b.WriteRune(r)
 				return true
 			}
 		})
-		dq.Value = buf.String()
+		dq.Value = b.String()
 	}
 }
 
@@ -525,7 +533,7 @@ var (
 	nameSet            = "_" + digitSet + letterSet
 )
 
-func (va *Variable) parseInner(p *parser) {
+func (va *Variable) parse(p *parser, opt nodeOpt) {
 	if !p.consumePrefix("{") {
 		// No braces, e.g. $x
 		va.Name = parseVariableName(p, false)
@@ -539,12 +547,12 @@ func (va *Variable) parseInner(p *parser) {
 			// This is ambiguous, but POSIX prefers # to be parsed as the string
 			// length operator. Note that since $=
 			// and $+ are not valid variable names this will eventually result
-			// in a parse error. We permit those.
+			// in a parseNoOpt error. We permit those.
 			va.LengthOp = true
 			va.Name = p.consume(1)
 			// va.Name = parseVariableName(p, true)
 		} else if p.hasPrefixIn("=}", "+}") != "" {
-			// According to POSIX, "${#=}" and "${#+}" should also parse the #
+			// According to POSIX, "${#=}" and "${#+}" should also parseNoOpt the #
 			// as the string length operator. However, since $= and $+ are not
 			// valid variable names, this will result in an error. Parsing them
 			// as modifiers with an empty argument doesn't make sense either,
@@ -562,7 +570,7 @@ func (va *Variable) parseInner(p *parser) {
 		va.Name = parseVariableName(p, true)
 	}
 	if p.hasPrefixNot("}") {
-		va.Modifier = parse(p, &Modifier{})
+		va.Modifier = parse(p, &Modifier{}, opt)
 	}
 	if !p.consumePrefix("}") {
 		p.errorf("missing } to match {")
@@ -605,22 +613,28 @@ var modifierOps = []string{
 	":-", "-", ":=", "=", ":?", "?", ":+", "+", "%%", "%", "##", "#",
 }
 
-func (md *Modifier) parseInner(p *parser) {
+func (md *Modifier) parse(p *parser, opt nodeOpt) {
 	md.Operator = p.consumePrefixIn(modifierOps...)
 	if md.Operator == "" {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
-	md.Argument = parse(p, &Compound{})
+	md.Argument = parse(p, &Compound{}, opt&^inBackquotes)
 }
 
 // Lookahead.
 
-func (p *parser) mayParseCommand() bool {
+func (p *parser) mayParseCommand(opt nodeOpt) bool {
+	if opt&inBackquotes != 0 && p.nextIn("`") {
+		return false
+	}
 	return p.nextInCompl(commandStopper)
 }
 
-func (p *parser) mayParseExpr() bool {
+func (p *parser) mayParseExpr(opt nodeOpt) bool {
+	if opt&inBackquotes != 0 && p.nextIn("`") {
+		return false
+	}
 	return p.nextInCompl(exprStopper)
 }
 
