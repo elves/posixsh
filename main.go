@@ -20,6 +20,7 @@ var (
 func main() {
 	flag.Parse()
 	args := flag.Args()
+	ev := eval.NewEvaler(eval.StdFiles)
 	if len(args) > 0 {
 		f, err := os.Open(args[0])
 		if err != nil {
@@ -27,16 +28,16 @@ func main() {
 			return
 		}
 		defer f.Close()
-		evalAll(f)
+		evalAll(ev, f)
 		return
 	} else if sys.IsATTY(os.Stdin.Fd()) {
-		repl()
+		repl(ev)
 	} else {
-		evalAll(os.Stdin)
+		evalAll(ev, os.Stdin)
 	}
 }
 
-func repl() {
+func repl(ev *eval.Evaler) {
 	stdin := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("posixsh> ")
@@ -47,19 +48,19 @@ func repl() {
 			}
 			break
 		}
-		doEval(input)
+		doEval(ev, input)
 	}
 }
 
-func evalAll(r io.Reader) {
+func evalAll(ev *eval.Evaler, r io.Reader) {
 	buf, err := io.ReadAll(r)
 	if err != nil {
 		fmt.Println(err)
 	}
-	doEval(string(buf))
+	doEval(ev, string(buf))
 }
 
-func doEval(input string) {
+func doEval(ev *eval.Evaler, input string) {
 	n, err := parse.Parse(input)
 	if *printAST {
 		fmt.Println("node:", parse.PprintAST(n))
@@ -73,7 +74,7 @@ func doEval(input string) {
 		}
 	}
 
-	status := eval.NewEvaler(eval.StdFiles).EvalChunk(n)
+	status := ev.EvalChunk(n)
 	if status != 0 {
 		fmt.Println("status:", status)
 	}
