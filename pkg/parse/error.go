@@ -11,7 +11,7 @@ type Error struct {
 
 func (err Error) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%v parseNoOpt errors: ", len(err.Errors))
+	fmt.Fprintf(&b, "%v parse errors: ", len(err.Errors))
 	for i, e := range err.Errors {
 		if i > 0 {
 			b.WriteString("; ")

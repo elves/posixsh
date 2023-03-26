@@ -345,15 +345,67 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		return strings.TrimSuffix(string(output), "\n")
 	case parse.VariablePrimary:
 		v := pr.Variable
-		value := fm.getVar(v.Name)
+		value, set := fm.getVar(v.Name)
 		if v.Modifier != nil {
 			mod := v.Modifier
-			// TODO Implement operators
+			argument := fm.compound(mod.Argument)
+			assign := false
 			switch mod.Operator {
+			case "-":
+				if !set {
+					value = argument
+				}
+			case "=":
+				if !set {
+					value = argument
+					assign = true
+				}
+			case ":-":
+				if value == "" {
+					value = argument
+				}
+			case ":=":
+				if value == "" {
+					value = argument
+					assign = true
+				}
+			case "?":
+				if !set {
+					if argument == "" {
+						fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
+					} else {
+						fmt.Fprintf(fm.files[2], "%v is unset: %v\n", v.Name, argument)
+					}
+					// TODO: exit
+				}
+			case ":?":
+				if value == "" {
+					if argument == "" {
+						fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
+					} else {
+						fmt.Fprintf(fm.files[2], "%v is null or unset: %v\n", v.Name, argument)
+					}
+					// TODO: exit
+				}
+			case "+":
+				if set {
+					value = argument
+				}
+			case ":+":
+				if value != "" {
+					value = argument
+				}
+			case "#", "##":
+				// TODO: Implement pattern
+				value = strings.TrimPrefix(value, argument)
+			case "%", "%%":
+				// TODO: Implement pattern
+				value = strings.TrimSuffix(value, argument)
 			default:
-				fmt.Fprintln(fm.files[2], "unknown operator", mod.Operator)
+				// The parser doesn't parse other modifiers.
+				panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
 			}
-			if mod.Operator[len(mod.Operator)-1] == '=' {
+			if assign {
 				fm.variables[v.Name] = value
 			}
 		}
@@ -367,33 +419,33 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	}
 }
 
-func (fm *frame) getVar(name string) string {
+func (fm *frame) getVar(name string) (string, bool) {
 	switch name {
 	case "*", "@":
 		// TODO
-		return strings.Join(fm.arguments[1:], " ")
+		return strings.Join(fm.arguments[1:], " "), true
 	case "#":
-		return strconv.Itoa(len(fm.arguments) - 1)
+		return strconv.Itoa(len(fm.arguments) - 1), true
 	case "?":
 		// TODO: Actually return $?
-		return "0"
+		return "0", true
 	case "-":
 		// TODO
-		return ""
+		return "", true
 	case "$":
-		return strconv.Itoa(os.Getpid())
+		return strconv.Itoa(os.Getpid()), true
 	case "!":
 		// TODO
-		return ""
+		return "", false
 	default:
 		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
-			fmt.Printf("read argument from %p %p\n", fm, fm.arguments)
 			if i < len(fm.arguments) {
-				return fm.arguments[i]
+				return fm.arguments[i], true
 			}
-			return ""
+			return "", false
 		}
-		return fm.variables[name]
+		value, ok := fm.variables[name]
+		return value, ok
 	}
 }
 

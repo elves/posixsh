@@ -1,4 +1,4 @@
-// Package parseNoOpt implements parsing of POSIX shell scripts.
+// Package parse implements parsing of POSIX shell scripts.
 package parse
 
 //go:generate stringer -type=RedirMode,PrimaryType,DQSegmentType -output=string.go
@@ -173,7 +173,7 @@ type Heredoc struct {
 	Value  string
 }
 
-// This function is called in (*Whitespaces).parseNoOpt immediately after a \n,
+// This function is called in (*Whitespaces).parse immediately after a \n,
 // for each pending Heredoc.
 func (hd *Heredoc) parse(p *parser, _ struct{}) {
 	begin := p.pos
@@ -543,21 +543,35 @@ func (va *Variable) parse(p *parser, opt nodeOpt) {
 	if p.consumePrefix("#") {
 		// We have seen "${#". It can either be the variable $# or the string
 		// length operator, depending on what comes next.
-		if p.hasPrefixIn("-}", "?}", "=}", "+}") != "" {
-			// This is ambiguous, but POSIX prefers # to be parsed as the string
-			// length operator. Note that since $=
-			// and $+ are not valid variable names this will eventually result
-			// in a parseNoOpt error. We permit those.
+		if p.hasPrefixIn("-}", "?}") != "" {
+			// ${#-} and ${#?} are ambiguous, and can be parsed either as the
+			// length of $- and $?, or as an operator following $# with an empty
+			// argument.
+			//
+			// POSIX doesn't say definitely which behavior is correct, but seems
+			// to prefer the former interpretation by saying that application
+			// should not use an empty argument if the latter is desired. In
+			// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_02:
+			// > If parameter is '#' and the colon is omitted, the application
+			// > shall ensure that word is specified (this is necessary to avoid
+			// > ambiguity with the string length expansion)
+			//
+			// This behavior is consistent with dash, bash and zsh.
 			va.LengthOp = true
 			va.Name = p.consume(1)
 			// va.Name = parseVariableName(p, true)
 		} else if p.hasPrefixIn("=}", "+}") != "" {
-			// According to POSIX, "${#=}" and "${#+}" should also parseNoOpt the #
-			// as the string length operator. However, since $= and $+ are not
-			// valid variable names, this will result in an error. Parsing them
-			// as modifiers with an empty argument doesn't make sense either,
-			// since $# cannot be assigned and is always set. We complain and
-			// treat them as ${#}.
+			// Similarly to the previous case, ${#=} and ${#+} are also
+			// ambiguous, but POSIX seems to prefer to parse them as the length
+			// of $= and $+. However, since these variables are invalid, this
+			// will result immediately in a parse error.
+			//
+			// The alternative interpretation of an operator following $# is
+			// technically possible but not useful, since $# is always set and
+			// non-null.
+			//
+			// This behavior is consistent with dash and bash, but zsh uses the
+			// alternative interpretation.
 			p.errorf("invalid parameter substitution ${#%s}, treating as ${#}", p.consume(1))
 			va.Name = "#"
 		} else if p.hasPrefix("}") || p.hasPrefixIn(modifierOps...) != "" {
@@ -565,6 +579,12 @@ func (va *Variable) parse(p *parser, opt nodeOpt) {
 		} else {
 			va.LengthOp = true
 			va.Name = parseVariableName(p, true)
+			// POSIX doesn't specify whether the prefix # operator can coexist
+			// with the suffix operators; we permit it. The Evaler evaluates the
+			// suffix operator before applying the length operator.
+			//
+			// This behavior is consistent with zsh; dash and bash both forbid
+			// it.
 		}
 	} else {
 		va.Name = parseVariableName(p, true)
