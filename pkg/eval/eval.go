@@ -370,10 +370,21 @@ func (fm *frame) primary(pr *parse.Primary) string {
 func (fm *frame) getVar(name string) string {
 	switch name {
 	case "*", "@":
+		// TODO
 		return strings.Join(fm.arguments[1:], " ")
+	case "#":
+		return strconv.Itoa(len(fm.arguments) - 1)
 	case "?":
 		// TODO: Actually return $?
 		return "0"
+	case "-":
+		// TODO
+		return ""
+	case "$":
+		return strconv.Itoa(os.Getpid())
+	case "!":
+		// TODO
+		return ""
 	default:
 		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
 			fmt.Printf("read argument from %p %p\n", fm, fm.arguments)
