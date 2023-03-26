@@ -20,7 +20,7 @@ var (
 func main() {
 	flag.Parse()
 	args := flag.Args()
-	ev := eval.NewEvaler(eval.StdFiles)
+	ev := eval.NewEvaler(os.Args, eval.StdFiles)
 	if len(args) > 0 {
 		f, err := os.Open(args[0])
 		if err != nil {

@@ -63,6 +63,7 @@ func parseOilSpecFile(filename, content string) []spec {
 		}
 		name := lines[i][len(namePrefix):]
 		var codeBuilder strings.Builder
+		var argv []string
 		var status []int
 		var stdout, stderr []string
 		skipSpec := false
@@ -108,6 +109,15 @@ func parseOilSpecFile(filename, content string) []spec {
 			case "code":
 				codeBuilder.WriteString(value)
 				codeBuilder.WriteByte('\n')
+			case "argv-json":
+				// NOTE: My extension; not used by Oil's spec tests.
+				var ss []string
+				err := json.Unmarshal([]byte(value), &ss)
+				if err != nil {
+					warn("can't parse argv-json as JSON")
+				} else {
+					argv = ss
+				}
 			case "status":
 				i, err := strconv.Atoi(value)
 				if err != nil {
@@ -167,8 +177,7 @@ func parseOilSpecFile(filename, content string) []spec {
 			status = []int{0}
 		}
 		specs = append(specs, spec{
-			filename, name, codeBuilder.String(),
-			status, stdout, stderr})
+			filename, name, codeBuilder.String(), argv, status, stdout, stderr})
 	}
 	return specs
 }

@@ -18,6 +18,7 @@ type spec struct {
 	suite string
 	name  string
 	code  string
+	argv  []string
 
 	// No elements = don't check.
 	// Multiple elements = any one is OK.
@@ -46,7 +47,11 @@ func TestSpecs(t *testing.T) {
 			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()
-			ev := eval.NewEvaler(files)
+			argv := spec.argv
+			if len(argv) == 0 {
+				argv = []string{"/bin/sh"}
+			}
+			ev := eval.NewEvaler(argv, files)
 			status := ev.Eval(spec.code)
 			stdout, stderr := read()
 			if len(spec.wantStatus) != 0 && !in(status, spec.wantStatus) {

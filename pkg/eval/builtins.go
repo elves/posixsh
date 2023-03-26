@@ -7,6 +7,7 @@ import (
 
 var builtins = map[string]func(*frame, []string) int{
 	"read": read,
+	"set":  set,
 }
 
 func read(fm *frame, args []string) int {
@@ -17,6 +18,17 @@ func read(fm *frame, args []string) int {
 		fm.variables[args[0]] = line
 		// TODO: Support multiple arguments:
 	}
+	return 0
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#set
+func set(fm *frame, args []string) int {
+	// TODO: Support outputting parameters.
+	// TODO: Support setting options.
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	*fm.arguments = append([]string{(*fm.arguments)[0]}, args...)
 	return 0
 }
 

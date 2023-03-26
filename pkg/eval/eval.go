@@ -15,7 +15,7 @@ import (
 )
 
 type Evaler struct {
-	arguments []string
+	arguments *[]string
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
 	files     []*os.File
@@ -23,12 +23,15 @@ type Evaler struct {
 
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
 
-func NewEvaler(files []*os.File) *Evaler {
+func NewEvaler(args []string, files []*os.File) *Evaler {
+	if len(args) < 1 {
+		panic("args must have at least 1 element")
+	}
 	if len(files) < 3 {
 		panic("files must have at least 3 elements")
 	}
 	return &Evaler{
-		nil,
+		&args,
 		make(map[string]string),
 		make(map[string]*parse.CompoundCommand),
 		files,
@@ -54,7 +57,7 @@ func (ev *Evaler) frame() *frame {
 }
 
 type frame struct {
-	arguments []string
+	arguments *[]string
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
 	files     []*os.File
@@ -68,8 +71,9 @@ func (fm *frame) cloneForRedir() *frame {
 }
 
 func (fm *frame) cloneForSubshell() *frame {
+	arguments := append([]string(nil), *fm.arguments...)
 	newFm := &frame{
-		append([]string(nil), fm.arguments...),
+		&arguments,
 		make(map[string]string), make(map[string]*parse.CompoundCommand),
 		append([]*os.File(nil), fm.files...),
 	}
@@ -254,7 +258,7 @@ func (fm *frame) form(f *parse.Form) int {
 	// Functions?
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
-		fm.arguments = words
+		fm.arguments = &words
 		ret := fm.compoundCommand(fn)
 		fm.arguments = oldArgs
 		return ret
@@ -373,14 +377,15 @@ func (fm *frame) primary(pr *parse.Primary) string {
 func (fm *frame) getVar(name string) string {
 	switch name {
 	case "*", "@":
-		return strings.Join(fm.arguments[1:], " ")
+		return strings.Join((*fm.arguments)[1:], " ")
 	case "?":
 		// TODO: Actually return $?
 		return "0"
 	default:
 		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
-			if i < len(fm.arguments) {
-				return fm.arguments[i]
+			fmt.Printf("read argument from %p %p\n", fm, fm.arguments)
+			if i < len(*fm.arguments) {
+				return (*fm.arguments)[i]
 			}
 			return ""
 		}

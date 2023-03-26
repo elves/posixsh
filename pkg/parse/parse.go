@@ -577,12 +577,22 @@ func (va *Variable) parse(p *parser, opt nodeOpt) {
 	}
 }
 
+// See https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_02.
 func parseVariableName(p *parser, brace bool) string {
 	if name := p.consumeRuneIn(specialVariableSet); name != "" {
-		// Name may be one of the special variables. In that case, the name
-		// is always just one character. For instance, $$x is the same as $$"x",
-		// and ${$x} is invalid.
+		// Name may be one of the special variables. In that case, the name is
+		// always just one character, even inside braces. POSIX seems to have
+		// only defined the case when there are braces.
+		//
+		// For instance, $$x is the same as $$"x", and ${$x} is invalid.
 		return name
+	} else if brace {
+		// Consume a run of characters in nameSet, including digits.
+		if name := p.consumeWhileIn(nameSet); name != "" {
+			return name
+		}
+		p.errorf("missing or invalid variable name, assuming '_'")
+		return "_"
 	} else if name0 := p.consumeRuneIn(digitSet); name0 != "" {
 		// Name starts with a digit. If the variable is braced, the name can be
 		// a run of digits; otherwise the name is one digit. For instance, $0x
@@ -593,9 +603,9 @@ func parseVariableName(p *parser, brace bool) string {
 		}
 		return name + p.consumeWhileIn(digitSet)
 	} else if name := p.consumeWhileIn(nameSet); name != "" {
-		// Parse an ordinary variable name, a run of characters in nameSet and
-		// not starting with a digit. We already know that the name won't start
-		// with a digit because that case is handled by the previous branch.
+		// If we have reached this point, the variable name doesn't have braces
+		// and doesn't start with a digit. Consume a run of characters in
+		// nameSet, including digits.
 		return name
 	} else {
 		p.errorf("missing or invalid variable name, assuming '_'")
