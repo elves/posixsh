@@ -28,7 +28,7 @@ func set(fm *frame, args []string) int {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	*fm.arguments = append([]string{(*fm.arguments)[0]}, args...)
+	fm.arguments = append([]string{fm.arguments[0]}, args...)
 	return 0
 }
 

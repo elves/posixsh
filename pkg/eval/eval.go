@@ -15,7 +15,7 @@ import (
 )
 
 type Evaler struct {
-	arguments *[]string
+	arguments []string
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
 	files     []*os.File
@@ -31,7 +31,7 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 		panic("files must have at least 3 elements")
 	}
 	return &Evaler{
-		&args,
+		args,
 		make(map[string]string),
 		make(map[string]*parse.CompoundCommand),
 		files,
@@ -57,34 +57,19 @@ func (ev *Evaler) frame() *frame {
 }
 
 type frame struct {
-	arguments *[]string
+	arguments []string
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
 	files     []*os.File
 }
 
-func (fm *frame) cloneForRedir() *frame {
-	return &frame{
-		fm.arguments, fm.variables, fm.functions,
-		append([]*os.File(nil), fm.files...),
-	}
-}
-
 func (fm *frame) cloneForSubshell() *frame {
-	arguments := append([]string(nil), *fm.arguments...)
-	newFm := &frame{
-		&arguments,
-		make(map[string]string), make(map[string]*parse.CompoundCommand),
-		append([]*os.File(nil), fm.files...),
-	}
 	// TODO: Optimize with copy on write
-	for k, v := range fm.variables {
-		newFm.variables[k] = v
+	return &frame{
+		cloneSlice(fm.arguments),
+		cloneMap(fm.variables), cloneMap(fm.functions),
+		cloneSlice(fm.files),
 	}
-	for k, v := range fm.functions {
-		newFm.functions[k] = v
-	}
-	return newFm
 }
 
 func (fm *frame) chunk(ch *parse.Chunk) int {
@@ -113,7 +98,12 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 	n := len(ch.Forms)
 	if n == 1 {
 		// Short path
-		return fm.cloneForRedir().form(ch.Forms[0])
+		f := ch.Forms[0]
+		if len(f.Redirs) > 0 {
+			files := cloneSlice(fm.files)
+			defer func() { fm.files = files }()
+		}
+		return fm.form(f)
 	}
 
 	pipes := make([][2]*os.File, n-1)
@@ -140,7 +130,9 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 			newFm = fm.cloneForSubshell()
 			newFm.files[1] = pipes[i][1]
 		} else {
-			newFm = fm.cloneForRedir()
+			files := cloneSlice(fm.files)
+			defer func() { fm.files = files }()
+			newFm = fm
 		}
 		if i > 0 {
 			newFm.files[0] = pipes[i-1][0]
@@ -258,7 +250,7 @@ func (fm *frame) form(f *parse.Form) int {
 	// Functions?
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
-		fm.arguments = &words
+		fm.arguments = words
 		ret := fm.compoundCommand(fn)
 		fm.arguments = oldArgs
 		return ret
@@ -338,9 +330,10 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			return ""
 		}
 		go func() {
-			newFm := fm.cloneForRedir()
-			newFm.files[1] = w
-			newFm.chunk(pr.Body)
+			stdout := fm.files[1]
+			fm.files[1] = w
+			fm.chunk(pr.Body)
+			fm.files[1] = stdout
 			w.Close()
 		}()
 		// TODO: Split by $IFS
@@ -377,18 +370,30 @@ func (fm *frame) primary(pr *parse.Primary) string {
 func (fm *frame) getVar(name string) string {
 	switch name {
 	case "*", "@":
-		return strings.Join((*fm.arguments)[1:], " ")
+		return strings.Join(fm.arguments[1:], " ")
 	case "?":
 		// TODO: Actually return $?
 		return "0"
 	default:
 		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
 			fmt.Printf("read argument from %p %p\n", fm, fm.arguments)
-			if i < len(*fm.arguments) {
-				return (*fm.arguments)[i]
+			if i < len(fm.arguments) {
+				return fm.arguments[i]
 			}
 			return ""
 		}
 		return fm.variables[name]
 	}
+}
+
+func cloneSlice[T any](s []T) []T {
+	return append([]T(nil), s...)
+}
+
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	mm := make(map[K]V, len(m))
+	for k, v := range m {
+		mm[k] = v
+	}
+	return mm
 }
