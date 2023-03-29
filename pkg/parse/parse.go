@@ -346,7 +346,7 @@ func findTildePrefix(s string) string {
 	return s
 }
 
-// Primary = Bareword
+// Primary = Bareword | SingleQuoted | DoubleQuoted | WildcardChar | Arithmetic | OutputCapture | Variable
 type Primary struct {
 	node
 	Type PrimaryType
@@ -354,9 +354,10 @@ type Primary struct {
 	// WildcardCharPrimary. For the first two types, the value contains the
 	// processed value, e.g. the bareword \a has value "a".
 	Value      string
-	Variable   *Variable
-	DQSegments []*DQSegment
-	Body       *Chunk // Valid for OutputCapturePrimary.
+	Variable   *Variable    // Valid for VariablePrimary.
+	DQSegments []*DQSegment // Valid for DoubleQuotesPrimary.
+	Words      []*Compound  // Valid for ArithmeticPrimary.
+	Body       *Chunk       // Valid for OutputCapturePrimary.
 }
 
 type PrimaryType int
@@ -367,6 +368,7 @@ const (
 	SingleQuotedPrimary
 	DoubleQuotedPrimary
 	WildcardCharPrimary
+	ArithmeticPrimary
 	OutputCapturePrimary
 	VariablePrimary
 )
@@ -431,6 +433,16 @@ start:
 		}
 	case p.consumeRuneIn("[]*?") != "":
 		pr.Type = WildcardCharPrimary
+	case p.consumePrefix("$(("):
+		pr.Type = ArithmeticPrimary
+		p.inlineWhitespace()
+		for p.mayParseExpr(opt &^ inBackquotes) {
+			addTo(&pr.Words, parse(p, &Compound{}, opt&^inBackquotes))
+			p.inlineWhitespace()
+		}
+		if !p.consumePrefix("))") {
+			p.errorf("missing closing parentheses for arithmetic expression")
+		}
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
 		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
@@ -439,9 +451,9 @@ start:
 		}
 	case p.consumePrefix("$("):
 		pr.Type = OutputCapturePrimary
-		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
+		pr.Body = parse(p, &Chunk{}, opt&^inBackquotes)
 		if !p.consumePrefix(")") {
-			p.errorf("missing closing paranthesis for output capture")
+			p.errorf("missing closing parenthesis for output capture")
 		}
 	case p.consumePrefix("$"):
 		if p.nextIn(variableInitialSet) {

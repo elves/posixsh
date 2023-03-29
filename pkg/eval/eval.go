@@ -3,6 +3,7 @@ package eval
 import (
 	"bytes"
 	"fmt"
+	"github.com/elves/posixsh/pkg/arith"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -311,18 +312,29 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		return pr.Value
 	case parse.DoubleQuotedPrimary:
-		var buf bytes.Buffer
+		var b strings.Builder
 		for _, seg := range pr.DQSegments {
 			switch seg.Type {
 			case parse.DQStringSegment:
-				buf.WriteString(seg.Value)
+				b.WriteString(seg.Value)
 			case parse.DQExpansionSegment:
-				buf.WriteString(fm.primary(seg.Expansion))
+				b.WriteString(fm.primary(seg.Expansion))
 			default:
 				fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
 			}
 		}
-		return buf.String()
+		return b.String()
+	case parse.ArithmeticPrimary:
+		var b strings.Builder
+		for _, word := range pr.Words {
+			b.WriteString(fm.compound(word))
+		}
+		result, err := arith.Eval(b.String())
+		if err != nil {
+			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
+			// TODO: Exit?
+		}
+		return strconv.FormatInt(result, 10)
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {

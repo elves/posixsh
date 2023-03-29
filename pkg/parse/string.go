@@ -4,6 +4,18 @@ package parse
 
 import "strconv"
 
+func _() {
+	// An "invalid array index" compiler error signifies that the constant values have changed.
+	// Re-run the stringer command to generate them again.
+	var x [1]struct{}
+	_ = x[RedirInvalid-0]
+	_ = x[RedirInput-1]
+	_ = x[RedirOutput-2]
+	_ = x[RedirInputOutput-3]
+	_ = x[RedirAppend-4]
+	_ = x[RedirHeredoc-5]
+}
+
 const _RedirMode_name = "RedirInvalidRedirInputRedirOutputRedirInputOutputRedirAppendRedirHeredoc"
 
 var _RedirMode_index = [...]uint8{0, 12, 22, 33, 49, 60, 72}
@@ -14,16 +26,37 @@ func (i RedirMode) String() string {
 	}
 	return _RedirMode_name[_RedirMode_index[i]:_RedirMode_index[i+1]]
 }
+func _() {
+	// An "invalid array index" compiler error signifies that the constant values have changed.
+	// Re-run the stringer command to generate them again.
+	var x [1]struct{}
+	_ = x[InvalidPrimary-0]
+	_ = x[BarewordPrimary-1]
+	_ = x[SingleQuotedPrimary-2]
+	_ = x[DoubleQuotedPrimary-3]
+	_ = x[WildcardCharPrimary-4]
+	_ = x[ArithmeticPrimary-5]
+	_ = x[OutputCapturePrimary-6]
+	_ = x[VariablePrimary-7]
+}
 
-const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryWildcardCharPrimaryOutputCapturePrimaryVariablePrimary"
+const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryWildcardCharPrimaryArithmeticPrimaryOutputCapturePrimaryVariablePrimary"
 
-var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 86, 106, 121}
+var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 86, 103, 123, 138}
 
 func (i PrimaryType) String() string {
 	if i < 0 || i >= PrimaryType(len(_PrimaryType_index)-1) {
 		return "PrimaryType(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
 	return _PrimaryType_name[_PrimaryType_index[i]:_PrimaryType_index[i+1]]
+}
+func _() {
+	// An "invalid array index" compiler error signifies that the constant values have changed.
+	// Re-run the stringer command to generate them again.
+	var x [1]struct{}
+	_ = x[DQInvalidSegment-0]
+	_ = x[DQStringSegment-1]
+	_ = x[DQExpansionSegment-2]
 }
 
 const _DQSegmentType_name = "DQInvalidSegmentDQStringSegmentDQExpansionSegment"
