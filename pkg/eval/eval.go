@@ -314,7 +314,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	case parse.DoubleQuotedPrimary:
 		return fm.evalDQSegments(pr.Segments)
 	case parse.ArithmeticPrimary:
-		result, err := arith.Eval(fm.evalDQSegments(pr.Segments))
+		result, err := arith.Eval(fm.evalDQSegments(pr.Segments), fm.variables)
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
