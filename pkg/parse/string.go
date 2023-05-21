@@ -34,15 +34,15 @@ func _() {
 	_ = x[BarewordPrimary-1]
 	_ = x[SingleQuotedPrimary-2]
 	_ = x[DoubleQuotedPrimary-3]
-	_ = x[WildcardCharPrimary-4]
-	_ = x[ArithmeticPrimary-5]
+	_ = x[ArithmeticPrimary-4]
+	_ = x[WildcardCharPrimary-5]
 	_ = x[OutputCapturePrimary-6]
 	_ = x[VariablePrimary-7]
 }
 
-const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryWildcardCharPrimaryArithmeticPrimaryOutputCapturePrimaryVariablePrimary"
+const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryArithmeticPrimaryWildcardCharPrimaryOutputCapturePrimaryVariablePrimary"
 
-var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 86, 103, 123, 138}
+var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 84, 103, 123, 138}
 
 func (i PrimaryType) String() string {
 	if i < 0 || i >= PrimaryType(len(_PrimaryType_index)-1) {

@@ -3,8 +3,7 @@ package eval
 import (
 	"bytes"
 	"fmt"
-	"github.com/elves/posixsh/pkg/arith"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/elves/posixsh/pkg/arith"
 	"github.com/elves/posixsh/pkg/parse"
 )
 
@@ -312,24 +312,9 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		return pr.Value
 	case parse.DoubleQuotedPrimary:
-		var b strings.Builder
-		for _, seg := range pr.DQSegments {
-			switch seg.Type {
-			case parse.DQStringSegment:
-				b.WriteString(seg.Value)
-			case parse.DQExpansionSegment:
-				b.WriteString(fm.primary(seg.Expansion))
-			default:
-				fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
-			}
-		}
-		return b.String()
+		return fm.evalDQSegments(pr.DQSegments)
 	case parse.ArithmeticPrimary:
-		var b strings.Builder
-		for _, word := range pr.Words {
-			b.WriteString(fm.compound(word))
-		}
-		result, err := arith.Eval(b.String())
+		result, err := arith.Eval(fm.evalDQSegments(pr.DQSegments))
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
@@ -349,7 +334,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			w.Close()
 		}()
 		// TODO: Split by $IFS
-		output, err := ioutil.ReadAll(r)
+		output, err := io.ReadAll(r)
 		r.Close()
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "read:", err)
@@ -429,6 +414,21 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
 		return ""
 	}
+}
+
+func (fm *frame) evalDQSegments(segs []*parse.DQSegment) string {
+	var b strings.Builder
+	for _, seg := range segs {
+		switch seg.Type {
+		case parse.DQStringSegment:
+			b.WriteString(seg.Value)
+		case parse.DQExpansionSegment:
+			b.WriteString(fm.primary(seg.Expansion))
+		default:
+			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
+		}
+	}
+	return b.String()
 }
 
 func (fm *frame) getVar(name string) (string, bool) {

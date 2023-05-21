@@ -355,8 +355,7 @@ type Primary struct {
 	// processed value, e.g. the bareword \a has value "a".
 	Value      string
 	Variable   *Variable    // Valid for VariablePrimary.
-	DQSegments []*DQSegment // Valid for DoubleQuotesPrimary.
-	Words      []*Compound  // Valid for ArithmeticPrimary.
+	DQSegments []*DQSegment // Valid for DoubleQuotesPrimary / ArithmeticPrimary.
 	Body       *Chunk       // Valid for OutputCapturePrimary.
 }
 
@@ -367,8 +366,8 @@ const (
 	BarewordPrimary
 	SingleQuotedPrimary
 	DoubleQuotedPrimary
-	WildcardCharPrimary
 	ArithmeticPrimary
+	WildcardCharPrimary
 	OutputCapturePrimary
 	VariablePrimary
 )
@@ -415,7 +414,7 @@ start:
 		begin := p.pos
 		_ = p.consumeWhileNotIn("'")
 		end := p.pos
-		// recoverPos returns a postion after all line continuations. When the
+		// recoverPos returns a position after all line continuations. When the
 		// single-quoted string has leading line continuations, those will be
 		// skipped. Hence, we adjust begin to the position of the opening quote,
 		// and adjust it back after recovery.
@@ -431,18 +430,23 @@ start:
 		if p.eof() {
 			p.errorf("unterminated double-quoted string")
 		}
-	case p.consumeRuneIn("[]*?") != "":
-		pr.Type = WildcardCharPrimary
 	case p.consumePrefix("$(("):
 		pr.Type = ArithmeticPrimary
 		p.inlineWhitespace()
-		for p.mayParseExpr(opt &^ inBackquotes) {
-			addTo(&pr.Words, parse(p, &Compound{}, opt&^inBackquotes))
-			p.inlineWhitespace()
+		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_04:
+		// An arithmetic expression "shall be treated as if it were in
+		// double-quotes, except that a double-quote inside the expression is
+		// not treated specially. The shell shall expand all tokens in the
+		// expression for parameter expansion, command substitution, and quote
+		// removal".
+		for !p.eof() && !p.consumePrefix("))") {
+			addTo(&pr.DQSegments, parse(p, &DQSegment{}, opt&^inBackquotes))
 		}
-		if !p.consumePrefix("))") {
-			p.errorf("missing closing parentheses for arithmetic expression")
+		if p.eof() {
+			p.errorf("unterminated arithmetic expression")
 		}
+	case p.consumeRuneIn("[]*?") != "":
+		pr.Type = WildcardCharPrimary
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
 		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
