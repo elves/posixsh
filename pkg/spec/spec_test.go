@@ -30,7 +30,7 @@ type spec struct {
 //go:embed oil posix
 var specFiles embed.FS
 
-var specs = parseOilSpecFilesInFS(specFiles)
+var specs = parseSpecFilesInFS(specFiles)
 
 var caseRegexp = regexp.MustCompile(`(?m)^case `)
 

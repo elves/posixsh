@@ -11,12 +11,12 @@ import (
 	"strings"
 )
 
-func parseOilSpecFilesInFS(fsys embed.FS) []spec {
+func parseSpecFilesInFS(fsys embed.FS) []spec {
 	var specs []spec
 	fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, _ error) error {
 		if !d.Type().IsDir() && strings.HasSuffix(path, ".test.sh") {
 			content, _ := fsys.ReadFile(path)
-			specs = append(specs, parseOilSpecFile(path, string(content))...)
+			specs = append(specs, parseSpecFile(path, string(content))...)
 		}
 		return nil
 	})
@@ -28,7 +28,18 @@ var (
 	dashPattern  = regexp.MustCompile(`\bdash\b`)
 )
 
-func parseOilSpecFile(filename, content string) []spec {
+// Parses a spec file using the format from the Oil shell. Notable details:
+//
+//   - An additional "argv-json" metadata is supported. Used for testing
+//     features related to argv without also testing the "set" builtin.
+//
+//   - Dash-specific non-BUG metadata are treated as acceptable alternative
+//     behavior. For example, if a test case specifies both "status: 0" and "N-I
+//     dash status: 2", both 0 and 2 are acceptable exit statuses.
+//
+//   - All other shell-specific metadata are ignored. This includes "BUG dash"
+//     metadata and metadata for all other shells.
+func parseSpecFile(filename, content string) []spec {
 	var specs []spec
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	i := 0
