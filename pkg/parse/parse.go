@@ -1,7 +1,7 @@
 // Package parse implements parsing of POSIX shell scripts.
 package parse
 
-//go:generate stringer -type=RedirMode,PrimaryType,DQSegmentType -output=string.go
+//go:generate stringer -type=RedirMode,PrimaryType,SegmentType -output=string.go
 
 import (
 	"bytes"
@@ -14,7 +14,7 @@ import (
 func Parse(text string) (*Chunk, error) {
 	p := newParser(text)
 	n := &Chunk{}
-	parse(p, n, nodeOpt(0))
+	parse(p, n, normal)
 	if p.rest() != "" {
 		p.errorf("unparsed code")
 	}
@@ -34,8 +34,9 @@ var commandStopper = " ;)}&|"
 type nodeOpt uint
 
 const (
+	normal nodeOpt = iota
 	// In backquotes, and not in a bracketed construct within.
-	inBackquotes nodeOpt = 1 << iota
+	inBackquotes
 )
 
 // Chunk = sw { AndOr sw }
@@ -303,7 +304,7 @@ func (cc *CompoundCommand) parse(p *parser, opt nodeOpt) {
 	default:
 		p.errorf("missing '{' or '(' for compound command")
 	}
-	cc.Body = parse(p, &Chunk{}, opt&^inBackquotes)
+	cc.Body = parse(p, &Chunk{}, normal)
 	if closer != "" {
 		p.meta(closer)
 	}
@@ -353,10 +354,10 @@ type Primary struct {
 	// String value. Valid for BarewordPrimary, SingleQuotedPrimary and
 	// WildcardCharPrimary. For the first two types, the value contains the
 	// processed value, e.g. the bareword \a has value "a".
-	Value      string
-	Variable   *Variable    // Valid for VariablePrimary.
-	DQSegments []*DQSegment // Valid for DoubleQuotesPrimary / ArithmeticPrimary.
-	Body       *Chunk       // Valid for OutputCapturePrimary.
+	Value    string
+	Variable *Variable  // Valid for VariablePrimary.
+	Segments []*Segment // Valid for DoubleQuotesPrimary / ArithmeticPrimary.
+	Body     *Chunk     // Valid for OutputCapturePrimary.
 }
 
 type PrimaryType int
@@ -425,37 +426,50 @@ start:
 	case p.consumePrefix(`"`):
 		pr.Type = DoubleQuotedPrimary
 		for !p.eof() && !p.consumePrefix(`"`) {
-			addTo(&pr.DQSegments, parse(p, &DQSegment{}, opt))
+			addTo(&pr.Segments, parse(p, &Segment{}, (*int)(nil)))
 		}
 		if p.eof() {
 			p.errorf("unterminated double-quoted string")
 		}
 	case p.consumePrefix("$(("):
 		pr.Type = ArithmeticPrimary
-		p.inlineWhitespace()
 		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_04:
 		// An arithmetic expression "shall be treated as if it were in
 		// double-quotes, except that a double-quote inside the expression is
 		// not treated specially. The shell shall expand all tokens in the
 		// expression for parameter expansion, command substitution, and quote
 		// removal".
-		for !p.eof() && !p.consumePrefix("))") {
-			addTo(&pr.DQSegments, parse(p, &DQSegment{}, opt&^inBackquotes))
+		//
+		// POSIX also doesn't specify when to parse "))" as the terminator of
+		// the arithmetic expression and when to parse it as just two closing
+		// parentheses, like in "$(( 1/(2*(1+2)) ))". What dash, bash and zsh
+		// all do is to keep track of the parenthesis balance, and only parse
+		// "))" as the terminator when there are no unmatched left parentheses.
+		// We follow their behavior here, and stop parsing as soon as we see a
+		// ")" with no matching "(".
+		unmatchedLeftParens := 0
+		for !p.eof() {
+			if unmatchedLeftParens == 0 {
+				if p.consumePrefix("))") {
+					return
+				} else if p.consumePrefix(")") {
+					p.errorf(") in arithmetic expression with no matching (")
+				}
+			}
+			addTo(&pr.Segments, parse(p, &Segment{}, &unmatchedLeftParens))
 		}
-		if p.eof() {
-			p.errorf("unterminated arithmetic expression")
-		}
+		p.errorf("unterminated arithmetic expression")
 	case p.consumeRuneIn("[]*?") != "":
 		pr.Type = WildcardCharPrimary
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
-		pr.Body = parse(p, &Chunk{}, opt|inBackquotes)
+		pr.Body = parse(p, &Chunk{}, inBackquotes)
 		if !p.consumePrefix("`") {
 			p.errorf("missing closing backquote for output capture")
 		}
 	case p.consumePrefix("$("):
 		pr.Type = OutputCapturePrimary
-		pr.Body = parse(p, &Chunk{}, opt&^inBackquotes)
+		pr.Body = parse(p, &Chunk{}, normal)
 		if !p.consumePrefix(")") {
 			p.errorf("missing closing parenthesis for output capture")
 		}
@@ -476,38 +490,40 @@ start:
 	}
 }
 
-type DQSegment struct {
+type Segment struct {
 	node
-	Type      DQSegmentType
+	Type      SegmentType
 	Value     string
 	Expansion *Primary
 }
 
-type DQSegmentType int
+type SegmentType int
 
 const (
-	DQInvalidSegment DQSegmentType = iota
-	DQStringSegment
-	DQExpansionSegment
+	InvalidSegment SegmentType = iota
+	StringSegment
+	ExpansionSegment
 )
 
 var (
-	dqStringSegmentStopper    = "$`\""
-	rawDQStringSegmentStopper = dqStringSegmentStopper + "\\"
+	dqStringSegmentStopper        = "$`\""
+	dqLiteralStringSegmentStopper = dqStringSegmentStopper + "\\"
 )
 
-func (dq *DQSegment) parse(p *parser, opt nodeOpt) {
-	if p.hasPrefixIn("$", "`") != "" {
-		dq.Type = DQExpansionSegment
-		dq.Expansion = parse(p, &Primary{}, opt&^inBackquotes)
-	} else {
-		dq.Type = DQStringSegment
+// Parses a segment inside "" (if unmatchedLeftParens == nil) or $(( )).
+func (seg *Segment) parse(p *parser, unmatchedLeftParens *int) {
+	switch {
+	case p.hasPrefixIn("$", "`") != "":
+		seg.Type = ExpansionSegment
+		seg.Expansion = parse(p, &Primary{}, normal)
+	case unmatchedLeftParens == nil:
+		seg.Type = StringSegment
 		// Optimization: Consume a prefix that does not contain backslashes.
 		// This avoids building a bytes.Buffer when this segment is free of
 		// backslashes.
-		raw := p.consumeWhileNotIn(rawDQStringSegmentStopper)
+		raw := p.consumeWhileNotIn(dqLiteralStringSegmentStopper)
 		if !p.hasPrefix("\\") {
-			dq.Value = raw
+			seg.Value = raw
 			return
 		}
 		var b strings.Builder
@@ -515,7 +531,7 @@ func (dq *DQSegment) parse(p *parser, opt nodeOpt) {
 		lastBackslash := false
 		p.consumeWhile(func(r rune) bool {
 			if lastBackslash {
-				if !runeIn(r, rawDQStringSegmentStopper) {
+				if !runeIn(r, dqLiteralStringSegmentStopper) {
 					b.WriteRune('\\')
 				}
 				b.WriteRune(r)
@@ -531,7 +547,32 @@ func (dq *DQSegment) parse(p *parser, opt nodeOpt) {
 				return true
 			}
 		})
-		dq.Value = b.String()
+		seg.Value = b.String()
+	default:
+		seg.Type = StringSegment
+		// POSIX says that an arithmetic expression "shall be treated as if it
+		// were in double-quotes", meaning that \ should be able to escape $ and
+		// `. However, since a literal $ or ` is invalid inside arithmetic
+		// expressions anyway, we don't actually need to handle this.
+		seg.Value = p.consumeWhile(func(r rune) bool {
+			switch r {
+			case '(':
+				*unmatchedLeftParens++
+				return true
+			case ')':
+				// Stop parsing as soon we see a ")" with no matching "(". See
+				// the comment in Primary.parse for more context.
+				if *unmatchedLeftParens == 0 {
+					return false
+				}
+				*unmatchedLeftParens--
+				return true
+			case '$', '`':
+				return false
+			default:
+				return true
+			}
+		})
 	}
 }
 
@@ -665,20 +706,20 @@ func (md *Modifier) parse(p *parser, opt nodeOpt) {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
-	md.Argument = parse(p, &Compound{}, opt&^inBackquotes)
+	md.Argument = parse(p, &Compound{}, normal)
 }
 
 // Lookahead.
 
 func (p *parser) mayParseCommand(opt nodeOpt) bool {
-	if opt&inBackquotes != 0 && p.nextIn("`") {
+	if opt == inBackquotes && p.nextIn("`") {
 		return false
 	}
 	return p.nextInCompl(commandStopper)
 }
 
 func (p *parser) mayParseExpr(opt nodeOpt) bool {
-	if opt&inBackquotes != 0 && p.nextIn("`") {
+	if opt == inBackquotes && p.nextIn("`") {
 		return false
 	}
 	return p.nextInCompl(exprStopper)

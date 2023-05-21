@@ -312,9 +312,9 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		return pr.Value
 	case parse.DoubleQuotedPrimary:
-		return fm.evalDQSegments(pr.DQSegments)
+		return fm.evalDQSegments(pr.Segments)
 	case parse.ArithmeticPrimary:
-		result, err := arith.Eval(fm.evalDQSegments(pr.DQSegments))
+		result, err := arith.Eval(fm.evalDQSegments(pr.Segments))
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
@@ -416,13 +416,13 @@ func (fm *frame) primary(pr *parse.Primary) string {
 	}
 }
 
-func (fm *frame) evalDQSegments(segs []*parse.DQSegment) string {
+func (fm *frame) evalDQSegments(segs []*parse.Segment) string {
 	var b strings.Builder
 	for _, seg := range segs {
 		switch seg.Type {
-		case parse.DQStringSegment:
+		case parse.StringSegment:
 			b.WriteString(seg.Value)
-		case parse.DQExpansionSegment:
+		case parse.ExpansionSegment:
 			b.WriteString(fm.primary(seg.Expansion))
 		default:
 			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)

@@ -42,8 +42,6 @@ func TestSpecs(t *testing.T) {
 				t.Skip("skipping since suite is disabled")
 			case caseRegexp.MatchString(spec.code):
 				t.Skip("skipping since code uses 'case'")
-			case strings.Contains(spec.code, "$(("):
-				t.Skip("skipping since code uses arithmetic expression")
 			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()

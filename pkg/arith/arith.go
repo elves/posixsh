@@ -2,10 +2,14 @@ package arith
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 )
 
+var whitespaceRegexp = regexp.MustCompile(`\s+`)
+
 func Eval(s string) (int64, error) {
+	s = whitespaceRegexp.ReplaceAllLiteralString(s, "")
 	p := parser{basicParser{s, 0}}
 	result, err := p.expr()
 	if !p.eof() {
