@@ -11,8 +11,15 @@ package eval
 // The practice of using 0 for no error is really well known, so we don't define
 // a constant for it; code should just use 0.
 const (
-	// Same as dash and bash; zsh uses 1. Tested with: $sh -c 'if;'
+	// Same as dash and bash; zsh uses 1. Tested with:
+	//     $sh -c 'if;'
 	StatusSyntaxError = 2
+	// Same as dash; bash and zsh use 1. Tested with:
+	//     $sh -c 'echo $(( ?? ))'
+	//     $sh -c 'x=")"; echo $((x))'
+	StatusArithmeticExpressionError = 2
+
+	StatusNotImplemented = 99
 
 	// Not sure what other shells use for the following error conditions.
 	StatusPipeError = 100

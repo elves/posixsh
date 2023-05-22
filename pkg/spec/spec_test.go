@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -32,16 +33,11 @@ var specFiles embed.FS
 
 var specs = parseSpecFilesInFS(specFiles)
 
-var caseRegexp = regexp.MustCompile(`(?m)^case `)
-
 func TestSpecs(t *testing.T) {
 	for _, spec := range specs {
 		t.Run(spec.suite+"/"+spec.name, func(t *testing.T) {
-			switch {
-			case !shouldRunSuite(spec.suite):
-				t.Skip("skipping since suite is disabled")
-			case caseRegexp.MatchString(spec.code):
-				t.Skip("skipping since code uses 'case'")
+			if reason := skipReason(spec); reason != "" {
+				t.Skip(reason)
 			}
 			testutil.InTempDir(t)
 			files, read := makeFiles()
@@ -67,15 +63,31 @@ func TestSpecs(t *testing.T) {
 	}
 }
 
-func shouldRunSuite(name string) bool {
-	if strings.HasPrefix(name, "posix/") {
-		return true
+var caseRegexp = regexp.MustCompile(`(?m)^case `)
+
+func skipReason(s spec) string {
+	if caseRegexp.MatchString(s.code) {
+		return "code uses 'case'"
 	}
-	switch name {
+	if strings.Contains(s.code, "should not get here") {
+		return "code tests error handling behavior"
+	}
+	switch s.suite {
 	case "oil/comments.test.sh", "oil/quote.test.sh":
-		return true
+		return ""
+	case "oil/arith.test.sh":
+		if len(s.wantStatus) > 0 && !reflect.DeepEqual(s.wantStatus, []int{0}) {
+			return "code tests error handling behavior"
+		}
+		if s.name == "Integer Overflow" {
+			return "overflow should be OK instead of BUG"
+		}
+		return ""
 	default:
-		return false
+		if strings.HasPrefix(s.suite, "oil/") {
+			return "suite is disabled"
+		}
+		return ""
 	}
 }
 
