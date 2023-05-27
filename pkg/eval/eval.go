@@ -339,7 +339,7 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "read:", err)
 		}
-		return strings.TrimSuffix(string(output), "\n")
+		return strings.TrimRight(string(output), "\n")
 	case parse.VariablePrimary:
 		v := pr.Variable
 		value, set := fm.getVar(v.Name)
