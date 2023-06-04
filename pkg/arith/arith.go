@@ -264,7 +264,7 @@ func (p *parser) primary() (int64, error) {
 			return 0, p.errorf("can't parse as number %q", num)
 		}
 		return x, nil
-	} else if token := p.peek(0); token == "--" || token == "++" || isVariableToken(token) {
+	} else if token := p.peek(0); token == "--" || token == "++" || (token != "" && isVariableToken(token)) {
 		// Evaluate a variable, possibly surrounded by ++ and -- on either side.
 		preInc, preDec := p.parseIncDec()
 		name := p.nextIf(isVariableToken)

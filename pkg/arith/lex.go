@@ -51,8 +51,10 @@ func isTwoByteOp(s string) bool {
 	switch s {
 	case "||", "&&", "==", "!=", "<=", ">=", "<<", ">>", "++", "--":
 		// Note: For simplicity, augmented assignment operators are parsed as
-		// two separate operators. This allows expressions like "a + = 2", which
-		// is not valid syntax in other shells, but it's harmless to support it.
+		// two separate operators, so operators like "+=" are not included here.
+		//
+		// This allows expressions like "a + = 2", which is not valid syntax in
+		// other shells, but it's harmless to support it.
 		return true
 	}
 	return false
