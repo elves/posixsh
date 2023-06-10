@@ -11,12 +11,13 @@ printf 'output=%s\n' `echo foo`
 # TODO: Test subshell behavior
 
 #### All trailing newlines are removed
-# Use double quotes to avoid the interference of field splitting
-printf 'output=%s\n' $(printf 'foo\n\n\n')
+# Note: We need to use double quotes here to avoid the interference of field
+# splitting.
+printf 'output=%s\n' "$(printf 'foo\n\n\n')"
 ## stdout: output=foo
 
 #### Non-trailing newlines are preserved
-printf 'output=%s\n' $(printf '\nfoo\n\nbar')
+printf 'output=%s\n' "$(printf '\nfoo\n\nbar')"
 ## STDOUT:
 output=
 foo

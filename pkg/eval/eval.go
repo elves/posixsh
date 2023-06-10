@@ -1,11 +1,11 @@
 package eval
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -168,9 +168,12 @@ func (fm *frame) form(f *parse.Form) int {
 	case parse.CompoundCommandForm:
 		return fm.compoundCommand(f.Body)
 	case parse.FnDefinitionForm:
-		// TODO What to do with redirs?
+		// According to POSIX, redirections in a function definition form apply
+		// when the function is defined.
+		//
+		// TODO: Implement this.
 		for _, word := range f.Words {
-			name := fm.compound(word)
+			name := fm.compound(word, false)[0]
 			fm.functions[name] = f.Body
 		}
 		return 0
@@ -215,7 +218,28 @@ func (fm *frame) form(f *parse.Form) int {
 			}()
 			src = r
 		} else {
-			right := fm.compound(redir.Right)
+			// POSIX specifies the following in
+			// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07:
+			//
+			// > For the other redirection operators [that are not "<<" or
+			// > "<<-"], the word that follows the redirection operator shall be
+			// > subjected to tilde expansion, parameter expansion, command
+			// > substitution, arithmetic expansion, and quote removal.
+			// > Pathname expansion shall not be performed on the word by a
+			// > non-interactive shell; an interactive shell may perform it, but
+			// > shall do so only when the expansion would result in one word.
+			//
+			// In other words, both field splitting and pathname expansion
+			// should be suppressed when evaluating the RHS of redirection
+			// operators.
+			//
+			// In reality, this only describes the behavior of dash and ksh.
+			// Bash by default doesn't suppress either, and errors when the RHS
+			// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
+			// suppress pathname expansion, but not field splitting.
+			//
+			// TODO: Suppress pathname expansion.
+			right := fm.compound(redir.Right, false)[0]
 			f, err := os.OpenFile(right, flag, 0644)
 			if err != nil {
 				continue
@@ -237,12 +261,12 @@ func (fm *frame) form(f *parse.Form) int {
 
 	// TODO: Temp assignment
 	for _, assign := range f.Assigns {
-		fm.variables[assign.LHS] = fm.compound(assign.RHS)
+		fm.variables[assign.LHS] = fm.compound(assign.RHS, false)[0]
 	}
 
 	var words []string
 	for _, cp := range f.Words {
-		words = append(words, fm.compound(cp))
+		words = append(words, fm.compound(cp, true)...)
 	}
 	if len(words) == 0 {
 		return 0
@@ -296,35 +320,52 @@ func (fm *frame) form(f *parse.Form) int {
 	}
 }
 
-func (fm *frame) compound(cp *parse.Compound) string {
+func (fm *frame) compound(cp *parse.Compound, split bool) []string {
 	if cp.TildePrefix != "" {
 		fmt.Fprintln(fm.files[2], "tilde not supported yet")
 	}
-	var buf bytes.Buffer
-	for _, pr := range cp.Parts {
-		buf.WriteString(fm.primary(pr))
+	var words []string
+	if !split {
+		words = []string{""}
 	}
-	return buf.String()
+	for _, pr := range cp.Parts {
+		more := fm.primary(pr, split)
+		if len(words) == 0 {
+			words = more
+		} else if len(more) > 0 {
+			words[len(words)-1] += more[0]
+			words = append(words, more[1:]...)
+		}
+	}
+	return words
 }
 
-func (fm *frame) primary(pr *parse.Primary) string {
+func (fm *frame) primary(pr *parse.Primary, split bool) []string {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
-		return pr.Value
+		// Literals don't undergo word splitting
+		return []string{pr.Value}
 	case parse.DoubleQuotedPrimary:
-		return fm.evalDQSegments(pr.Segments)
+		// Literals don't undergo word splitting
+		return []string{fm.evalDQSegments(pr.Segments)}
 	case parse.ArithmeticPrimary:
 		result, err := arith.Eval(fm.evalDQSegments(pr.Segments), fm.variables)
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
 		}
-		return strconv.FormatInt(result, 10)
+		// Arithmetic expressions undergo word splitting.
+		//
+		// This seems unlikely to be useful (the result is a single number), but
+		// it's specified by POSIX and implemented by dash, bash and ksh.
+		// Interestingly, zsh doesn't perform word splitting on the result of
+		// arithmetic expressions even with "setopt sh_word_split".
+		return fm.splitWords(strconv.FormatInt(result, 10), split)
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "pipe:", err)
-			return ""
+			return nil
 		}
 		go func() {
 			stdout := fm.files[1]
@@ -333,19 +374,20 @@ func (fm *frame) primary(pr *parse.Primary) string {
 			fm.files[1] = stdout
 			w.Close()
 		}()
-		// TODO: Split by $IFS
 		output, err := io.ReadAll(r)
 		r.Close()
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "read:", err)
 		}
-		return strings.TrimRight(string(output), "\n")
+		// Removal of trailing newlines happens independently of and before word
+		// splitting.
+		return fm.splitWords(strings.TrimRight(string(output), "\n"), split)
 	case parse.VariablePrimary:
 		v := pr.Variable
 		value, set := fm.getVar(v.Name)
 		if v.Modifier != nil {
 			mod := v.Modifier
-			argument := fm.compound(mod.Argument)
+			argument := fm.compound(mod.Argument, false)[0]
 			assign := false
 			switch mod.Operator {
 			case "-":
@@ -409,10 +451,10 @@ func (fm *frame) primary(pr *parse.Primary) string {
 		if v.LengthOp {
 			value = strconv.Itoa(len(value))
 		}
-		return value
+		return fm.splitWords(value, split)
 	default:
 		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
-		return ""
+		return []string{""}
 	}
 }
 
@@ -423,12 +465,69 @@ func (fm *frame) evalDQSegments(segs []*parse.Segment) string {
 		case parse.StringSegment:
 			b.WriteString(seg.Value)
 		case parse.ExpansionSegment:
-			b.WriteString(fm.primary(seg.Expansion))
+			b.WriteString(fm.primary(seg.Expansion, false)[0])
 		default:
 			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
 		}
 	}
 	return b.String()
+}
+
+func (fm *frame) splitWords(s string, split bool) []string {
+	if !split {
+		return []string{s}
+	}
+	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
+	ifs, set := fm.variables["IFS"]
+	if !set {
+		ifs = " \t\n"
+	}
+	if ifs == "" {
+		return []string{s}
+	}
+	// The following implements the algorithm described in clause 3. Clause 1
+	// describes the default behavior, but its behavior is consistent with the
+	// more general clause 3.
+	//
+	// The algorithm depends on a definition of "character", which is not
+	// explicitly specified in this section. This detail is important when IFS
+	// contains multi-byte codepoints. Dash seems to treat each byte as a
+	// character, whereas both ksh and bash treats each codepoint as a
+	// character. We follow the behavior of ksh and bash because it makes more
+	// sense.
+	var whitespaceRunes, nonWhitespaceRunes []rune
+	for _, r := range ifs {
+		if r == ' ' || r == '\t' || r == '\n' {
+			whitespaceRunes = append(whitespaceRunes, r)
+		} else {
+			nonWhitespaceRunes = append(nonWhitespaceRunes, r)
+		}
+	}
+	whitespaces := string(whitespaceRunes)
+	nonWhitespaces := string(nonWhitespaceRunes)
+
+	// a. Ignore leading and trailing IFS whitespaces.
+	s = strings.Trim(s, whitespaces)
+
+	delimPatterns := make([]string, 0, 2)
+	// b. Each occurrence of a non-whitespace IFS character, with optional
+	// leading and trailing IFS whitespaces, are considered delimiters.
+	if nonWhitespaces != "" {
+		p := "[" + regexp.QuoteMeta(nonWhitespaces) + "]"
+		if whitespaces != "" {
+			whitePattern := "[" + regexp.QuoteMeta(whitespaces) + "]*"
+			p = whitePattern + p + whitePattern
+		}
+		delimPatterns = append(delimPatterns, p)
+	}
+	// c. Non-zero-length IFS white space shall delimit a field.
+	if whitespaces != "" {
+		p := "[" + regexp.QuoteMeta(whitespaces) + "]+"
+		delimPatterns = append(delimPatterns, p)
+	}
+
+	// Apply splitting from rule b and c.
+	return regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
 }
 
 func (fm *frame) getVar(name string) (string, bool) {

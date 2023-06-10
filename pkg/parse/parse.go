@@ -141,6 +141,10 @@ items:
 		p.inlineWhitespace()
 	}
 	if p.maybeMeta("(") {
+		// POSIX only requires supporting a single static function name, but we
+		// support arbitrary number of function names (which all get defined
+		// with the same body), and their values may be dynamic. Only zsh seems
+		// to allow this too.
 		fm.Type = FnDefinitionForm
 		// Parse a function definition.
 		p.inlineWhitespace()
