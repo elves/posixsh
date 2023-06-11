@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/elves/posixsh/pkg/arith"
 	"github.com/elves/posixsh/pkg/parse"
@@ -383,79 +384,200 @@ func (fm *frame) primary(pr *parse.Primary, split bool) []string {
 		// splitting.
 		return fm.splitWords(strings.TrimRight(string(output), "\n"), split)
 	case parse.VariablePrimary:
-		v := pr.Variable
-		value, set := fm.getVar(v.Name)
-		if v.Modifier != nil {
-			mod := v.Modifier
-			argument := fm.compound(mod.Argument, false)[0]
-			assign := false
-			switch mod.Operator {
-			case "-":
-				if !set {
-					value = argument
-				}
-			case "=":
-				if !set {
-					value = argument
-					assign = true
-				}
-			case ":-":
-				if value == "" {
-					value = argument
-				}
-			case ":=":
-				if value == "" {
-					value = argument
-					assign = true
-				}
-			case "?":
-				if !set {
-					if argument == "" {
-						fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
-					} else {
-						fmt.Fprintf(fm.files[2], "%v is unset: %v\n", v.Name, argument)
-					}
-					// TODO: exit
-				}
-			case ":?":
-				if value == "" {
-					if argument == "" {
-						fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
-					} else {
-						fmt.Fprintf(fm.files[2], "%v is null or unset: %v\n", v.Name, argument)
-					}
-					// TODO: exit
-				}
-			case "+":
-				if set {
-					value = argument
-				}
-			case ":+":
-				if value != "" {
-					value = argument
-				}
-			case "#", "##":
-				// TODO: Implement pattern
-				value = strings.TrimPrefix(value, argument)
-			case "%", "%%":
-				// TODO: Implement pattern
-				value = strings.TrimSuffix(value, argument)
-			default:
-				// The parser doesn't parse other modifiers.
-				panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
-			}
-			if assign {
-				fm.variables[v.Name] = value
-			}
-		}
-		if v.LengthOp {
-			value = strconv.Itoa(len(value))
-		}
-		return fm.splitWords(value, split)
+		return fm.variable(pr.Variable, split)
 	default:
 		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
 		return []string{""}
 	}
+}
+
+type varInfo struct {
+	set       bool
+	null      bool
+	normal    bool
+	scalar    bool
+	scalarVal string
+}
+
+func (fm *frame) variable(v *parse.Variable, split bool) []string {
+	name := v.Name
+	// We categorize suffix operators into two classes:
+	//
+	//  - Substitution operators: "-", ":-", "=", ":=", "+", ":+", "?" and ":?".
+	//  - Trimming operators: "%", "%%", "#" and "##".
+	//
+	// There is also one prefix operator "#". POSIX doesn't say explicitly
+	// whether it can be combined with a prefix operator. Dash, bash and ksh all
+	// error when a combination is detected; our parser does the same, so we
+	// assume that they are mutually exclusive.
+
+	// Get enough information about the variable for the substitution operators.
+	var info varInfo
+	if name == "*" || name == "@" {
+		n := len(fm.arguments)
+		info = varInfo{
+			set:  true,
+			null: n == 0 || (n == 1 && fm.arguments[0] == ""),
+		}
+	} else if value, set, ok := fm.specialScalarVar(name); ok {
+		info = scalarVarInfo(value, set, false)
+	} else if i, err := strconv.Atoi(name); err == nil && i >= 0 {
+		if i < len(fm.arguments) {
+			info = scalarVarInfo(fm.arguments[i], true, false)
+		} else {
+			info = scalarVarInfo("", false, false)
+		}
+	} else {
+		value, set := fm.variables[name]
+		info = scalarVarInfo(value, set, true)
+	}
+
+	if v.LengthOp {
+		var n int
+		if info.scalar {
+			n = len(info.scalarVal)
+		} else {
+			n = len(fm.arguments)
+		}
+		return fm.splitWords(strconv.Itoa(n), split)
+	}
+	if v.Modifier != nil {
+		// Handle substitution operators first.
+		mod := v.Modifier
+		var useArg, assignIfUse bool
+		switch mod.Operator {
+		case "-":
+			useArg = !info.set
+		case ":-":
+			useArg = info.null
+		case "=":
+			useArg = !info.set
+			assignIfUse = true
+		case ":=":
+			useArg = info.null
+			assignIfUse = true
+		case "+":
+			useArg = info.set
+		case ":+":
+			useArg = !info.null
+		case "?":
+			if !info.set {
+				argument := fm.compound(mod.Argument, false)[0]
+				if argument == "" {
+					fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
+				} else {
+					fmt.Fprintf(fm.files[2], "%v is unset: %v\n", v.Name, argument)
+				}
+				// TODO: exit
+			}
+		case ":?":
+			if info.null {
+				argument := fm.compound(mod.Argument, false)[0]
+				if argument == "" {
+					fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
+				} else {
+					fmt.Fprintf(fm.files[2], "%v is null or unset: %v\n", v.Name, argument)
+				}
+				// TODO: exit
+			}
+		case "#", "##":
+			return fm.trimVariable(info, mod.Argument, split, strings.TrimPrefix)
+		case "%", "%%":
+			return fm.trimVariable(info, mod.Argument, split, strings.TrimSuffix)
+		default:
+			// The parser doesn't parse other modifiers.
+			panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
+		}
+		if useArg {
+			// Expand the argument without word splitting, because we may need
+			// to assign it to the variable.
+			//
+			// TODO: Suppress pathname expansion when expanding the argument.
+			arg := fm.compound(mod.Argument, false)[0]
+			if assignIfUse {
+				if info.normal {
+					fm.variables[v.Name] = arg
+				} else {
+					fmt.Fprintf(fm.files[2], "%v cannot be assigned\n", v.Name)
+					// TODO: Is this a fatal error?
+				}
+			}
+			return fm.splitWords(arg, split)
+		}
+	}
+	// If we reach here, expand the variable itself.
+	if info.scalar {
+		return fm.splitWords(info.scalarVal, split)
+	}
+	// $* or $@. Both have complex word splitting behavior, described in
+	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_05_02.
+	//
+	// TODO: This now only implements $*. Implement $@ too.
+	//
+	// TODO: $@ needs to know whether it's inside double quotes. Make the second
+	// argument of .compound and .primary an enum instead of a bool.
+	if split {
+		var words []string
+		for _, arg := range fm.arguments[1:] {
+			if arg != "" {
+				words = append(words, fm.splitWords(arg, true)...)
+			}
+		}
+		return words
+	} else {
+		var sep string
+		ifs, set := fm.variables["IFS"]
+		if set {
+			if ifs != "" {
+				r, _ := utf8.DecodeRuneInString(ifs)
+				sep = string(r)
+			}
+		} else {
+			sep = " "
+		}
+		return []string{strings.Join(fm.arguments[1:], sep)}
+	}
+}
+
+func scalarVarInfo(value string, set, normal bool) varInfo {
+	return varInfo{
+		set:       set,
+		null:      value == "",
+		normal:    normal,
+		scalar:    true,
+		scalarVal: value,
+	}
+}
+
+func (fm *frame) specialScalarVar(name string) (string, bool, bool) {
+	switch name {
+	case "#":
+		return strconv.Itoa(len(fm.arguments) - 1), true, true
+	case "?":
+		// TODO: Actually return $?
+		return "0", true, true
+	case "-":
+		// TODO
+		return "", true, true
+	case "$":
+		return strconv.Itoa(os.Getpid()), true, true
+	case "!":
+		// TODO
+		return "", false, true
+	default:
+		return "", false, false
+	}
+}
+
+func (fm *frame) trimVariable(info varInfo, argNode *parse.Compound, split bool, f func(string, string) string) []string {
+	// TODO: Suppress pathname expansion when expanding the argument.
+	// TODO: Implement pattern
+	arg := fm.compound(argNode, false)[0]
+	if info.scalar {
+		return fm.splitWords(f(info.scalarVal, arg), split)
+	}
+	// TODO: Support $* and $@
+	return nil
 }
 
 func (fm *frame) evalDQSegments(segs []*parse.Segment) string {
@@ -528,36 +650,6 @@ func (fm *frame) splitWords(s string, split bool) []string {
 
 	// Apply splitting from rule b and c.
 	return regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
-}
-
-func (fm *frame) getVar(name string) (string, bool) {
-	switch name {
-	case "*", "@":
-		// TODO
-		return strings.Join(fm.arguments[1:], " "), true
-	case "#":
-		return strconv.Itoa(len(fm.arguments) - 1), true
-	case "?":
-		// TODO: Actually return $?
-		return "0", true
-	case "-":
-		// TODO
-		return "", true
-	case "$":
-		return strconv.Itoa(os.Getpid()), true
-	case "!":
-		// TODO
-		return "", false
-	default:
-		if i, err := strconv.Atoi(name); err == nil && i >= 0 {
-			if i < len(fm.arguments) {
-				return fm.arguments[i], true
-			}
-			return "", false
-		}
-		value, ok := fm.variables[name]
-		return value, ok
-	}
 }
 
 func cloneSlice[T any](s []T) []T {

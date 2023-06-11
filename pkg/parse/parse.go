@@ -652,6 +652,9 @@ func (va *Variable) parse(p *parser, opt nodeOpt) {
 	}
 	if p.hasPrefixNot("}") {
 		va.Modifier = parse(p, &Modifier{}, opt)
+		if va.LengthOp {
+			p.errorf("variable expansion has both length operator and modifier")
+		}
 	}
 	if !p.consumePrefix("}") {
 		p.errorf("missing } to match {")
@@ -710,6 +713,11 @@ func (md *Modifier) parse(p *parser, opt nodeOpt) {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
+	// TODO: All of dash, bash and ksh support multiple words in the modifier
+	// argument, and it seem to parse it in a special mode that preserves all
+	// spaces. For example, echo ${x:=foo  bar} results in x being assigned
+	// "foo  bar". We don't support multiple words at all now. Consider
+	// implementing it.
 	md.Argument = parse(p, &Compound{}, normal)
 }
 
