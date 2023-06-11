@@ -1,3 +1,33 @@
+#### Special parameter $@ with word splitting
+IFS=/:
+# Empty fields are removed, and non-empty ones undergo IFS splitting
+printf ': %s\n' $@
+## argv-json: ["/bin/sh", "foo/a", "", "bar"]
+## STDOUT:
+: foo
+: a
+: bar
+## END
+
+#### Special parameter $@ in double quotes
+printf ': %s\n' prefix-"$@"-suffix
+## argv-json: ["/bin/sh", "foo/a", "", "bar"]
+## STDOUT:
+: prefix-foo/a
+: 
+: bar-suffix
+## END
+
+#### Special parameter $@ in other environments suppressing word splitting
+IFS=/:
+x=$@
+printf '%s\n' "$x"
+## argv-json: ["/bin/sh", "foo/a", "", "bar"]
+## stdout: foo/a//bar
+
+# Other possible values of IFS are tested in the test cases against $*, as $*
+# and $@ share the same code path those environments.
+
 #### Special parameter $* with word splitting
 IFS=/:
 # Empty fields are removed, and non-empty ones undergo IFS splitting
