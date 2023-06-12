@@ -428,20 +428,40 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 	// Get enough information about the variable for the substitution operators.
 	var info varInfo
 	if name == "*" || name == "@" {
-		n := len(fm.arguments)
+		// $* or $@
+		//
+		// POSIX doesn't specify whether $* and $@ should be considered set or
+		// null for the substitution operators. No two shells agree completely
+		// (arg list values in JSON):
+		//
+		// | shell | set?   | null?                    |
+		// | ----- | ------ | ------------------------ |
+		// | dash  | always | [] or [""]               |
+		// | bash  | not [] | [] or [""]               |
+		// | ksh   | not [] | $1 null                  |
+		// | zsh   | always | not []                   |
+		//
+		// We follow what zsh does, interpreting these two tests as tests of the
+		// array. This is consistent with our handling of ${#*} and ${#@}.
 		info = varInfo{
 			set:  true,
-			null: n == 0 || (n == 1 && fm.arguments[0] == ""),
+			null: len(fm.arguments) <= 1,
 		}
 	} else if value, set, ok := fm.specialScalarVar(name); ok {
+		// Special scalar, like $#
 		info = scalarVarInfo(value, set, false)
 	} else if i, err := strconv.Atoi(name); err == nil && i >= 0 {
+		// Positional parameter, like $1. We also treat $0 as a positional
+		// parameter instead of a special parameter, meaning that ${00} and the
+		// like are allowed; this is unspecified in POSIX, but it's harmless to
+		// support and makes the code slightly simpler.
 		if i < len(fm.arguments) {
 			info = scalarVarInfo(fm.arguments[i], true, false)
 		} else {
 			info = scalarVarInfo("", false, false)
 		}
 	} else {
+		// Normal variable, like $foo.
 		value, set := fm.variables[name]
 		info = scalarVarInfo(value, set, true)
 	}
@@ -451,12 +471,14 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 		if info.scalar {
 			n = len(info.scalarVal)
 		} else {
-			n = len(fm.arguments)
+			// POSIX doesn't specify the value of ${#*} or ${#@}. Both bash and
+			// zsh expand them like $# (the length of the array), which we
+			// follow here. Dash seems to use the length of "$*" instead.
+			n = len(fm.arguments) - 1
 		}
 		return fm.splitWords(strconv.Itoa(n), eo)
 	}
 	if v.Modifier != nil {
-		// Handle substitution operators first.
 		mod := v.Modifier
 		var useArg, assignIfUse bool
 		switch mod.Operator {
@@ -514,6 +536,7 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 					// TODO: Is this a fatal error?
 				}
 			}
+			// TODO: This is wrong if arg is "a b": it should remain unsplit.
 			return fm.splitWords(arg, eo)
 		}
 	}
@@ -531,22 +554,20 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 			}
 		}
 		return words
-	} else if eo == noSplitOrGlob || name == "*" && eo == noSplitOrGlobDQ {
+	} else if eo == noSplitOrGlobDQ && name == "@" {
+		return fm.arguments[1:]
+	} else {
 		// POSIX leaves the behavior of $@ in a no-split environment that is not
 		// double quotes undefined; we let it behave like $*.
 		var sep string
 		ifs, set := fm.variables["IFS"]
-		if set {
-			if ifs != "" {
-				r, _ := utf8.DecodeRuneInString(ifs)
-				sep = string(r)
-			}
-		} else {
+		if ifs != "" {
+			r, _ := utf8.DecodeRuneInString(ifs)
+			sep = string(r)
+		} else if !set {
 			sep = " "
 		}
 		return []string{strings.Join(fm.arguments[1:], sep)}
-	} else { // name == "@" && so == noSplitDQ
-		return fm.arguments[1:]
 	}
 }
 
@@ -560,7 +581,7 @@ func scalarVarInfo(value string, set, normal bool) varInfo {
 	}
 }
 
-func (fm *frame) specialScalarVar(name string) (string, bool, bool) {
+func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	switch name {
 	case "#":
 		return strconv.Itoa(len(fm.arguments) - 1), true, true
@@ -618,8 +639,8 @@ func (fm *frame) splitWords(s string, eo expandOpt) []string {
 		return []string{s}
 	}
 	// The following implements the algorithm described in clause 3. Clause 1
-	// describes the default behavior, but its behavior is consistent with the
-	// more general clause 3.
+	// describes the default behavior, but it's consistent with the more general
+	// clause 3.
 	//
 	// The algorithm depends on a definition of "character", which is not
 	// explicitly specified in this section. This detail is important when IFS
@@ -659,6 +680,8 @@ func (fm *frame) splitWords(s string, eo expandOpt) []string {
 	}
 
 	// Apply splitting from rule b and c.
+	//
+	// TODO: Cache the compiled regexp.
 	return regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
 }
 
