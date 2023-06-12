@@ -174,7 +174,7 @@ func (fm *frame) form(f *parse.Form) int {
 		//
 		// TODO: Implement this.
 		for _, word := range f.Words {
-			name := fm.compound(word, noSplit)[0]
+			name := fm.compound(word, noSplitOrGlob)[0]
 			fm.functions[name] = f.Body
 		}
 		return 0
@@ -238,9 +238,7 @@ func (fm *frame) form(f *parse.Form) int {
 			// Bash by default doesn't suppress either, and errors when the RHS
 			// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
 			// suppress pathname expansion, but not field splitting.
-			//
-			// TODO: Suppress pathname expansion.
-			right := fm.compound(redir.Right, noSplit)[0]
+			right := fm.compound(redir.Right, noSplitOrGlob)[0]
 			f, err := os.OpenFile(right, flag, 0644)
 			if err != nil {
 				continue
@@ -262,12 +260,12 @@ func (fm *frame) form(f *parse.Form) int {
 
 	// TODO: Temp assignment
 	for _, assign := range f.Assigns {
-		fm.variables[assign.LHS] = fm.compound(assign.RHS, noSplit)[0]
+		fm.variables[assign.LHS] = fm.compound(assign.RHS, noSplitOrGlob)[0]
 	}
 
 	var words []string
 	for _, cp := range f.Words {
-		words = append(words, fm.compound(cp, split)...)
+		words = append(words, fm.compound(cp, splitAndGlob)...)
 	}
 	if len(words) == 0 {
 		return 0
@@ -321,39 +319,52 @@ func (fm *frame) form(f *parse.Form) int {
 	}
 }
 
-// Flag controlling whether word splitting is active.
-type splitOpt uint
+// Flag controlling expansion steps. POSIX groups expansions into three steps:
+//
+//  1. Tilde expansion, parameter expansion, command substitution and arithmetic
+//     expansion.
+//  2. Filed spltting.
+//  3. Path expansion.
+//  4. Quote removal.
+//
+// There are certain environments in which 2 and 3 are suppressed, and that is
+// controlled using this flag.
+//
+// Note that path expansion can be turned off by "set -f". In the context of
+// this flag, we only care about whether path expansion *would* be in effect if
+// "set -f" were not in effect.
+type expandOpt uint
 
 const (
-	split splitOpt = iota
-	// Suppresses word splitting. Using this value causes compound and primary
-	// to return a slice to have exactly one string.
-	noSplit
-	// The environment inside double quotes is almost the same as noSplit,
+	splitAndGlob expandOpt = iota
+	// Suppresses word splitting and globbing. Using this value also causes
+	// compound and primary to always expand to exactly one string.
+	noSplitOrGlob
+	// The environment inside double quotes is almost the same as noSplitOrGlob,
 	// except when expanding $@, which has special rules inside double quotes.
-	noSplitDQ
+	noSplitOrGlobDQ
 )
 
-func (fm *frame) compound(cp *parse.Compound, so splitOpt) []string {
+func (fm *frame) compound(cp *parse.Compound, eo expandOpt) []string {
 	if cp.TildePrefix != "" {
 		fmt.Fprintln(fm.files[2], "tilde not supported yet")
 	}
-	c := newConcatter(so)
+	c := newConcatter(eo)
 	for _, pr := range cp.Parts {
-		c.concat(fm.primary(pr, so))
+		c.concat(fm.primary(pr, eo))
 	}
 	return c.words
 }
 
-func (fm *frame) primary(pr *parse.Primary, so splitOpt) []string {
+func (fm *frame) primary(pr *parse.Primary, eo expandOpt) []string {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		// Literals don't undergo word splitting
 		return []string{pr.Value}
 	case parse.DoubleQuotedPrimary:
-		return fm.evalDQSegments(pr.Segments, noSplitDQ)
+		return fm.evalDQSegments(pr.Segments, noSplitOrGlobDQ)
 	case parse.ArithmeticPrimary:
-		result, err := arith.Eval(fm.evalDQSegments(pr.Segments, noSplit)[0], fm.variables)
+		result, err := arith.Eval(fm.evalDQSegments(pr.Segments, noSplitOrGlob)[0], fm.variables)
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
@@ -364,7 +375,7 @@ func (fm *frame) primary(pr *parse.Primary, so splitOpt) []string {
 		// it's specified by POSIX and implemented by dash, bash and ksh.
 		// Interestingly, zsh doesn't perform word splitting on the result of
 		// arithmetic expressions even with "setopt sh_word_split".
-		return fm.splitWords(strconv.FormatInt(result, 10), so)
+		return fm.splitWords(strconv.FormatInt(result, 10), eo)
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
@@ -385,9 +396,9 @@ func (fm *frame) primary(pr *parse.Primary, so splitOpt) []string {
 		}
 		// Removal of trailing newlines happens independently of and before word
 		// splitting.
-		return fm.splitWords(strings.TrimRight(string(output), "\n"), so)
+		return fm.splitWords(strings.TrimRight(string(output), "\n"), eo)
 	case parse.VariablePrimary:
-		return fm.variable(pr.Variable, so)
+		return fm.variable(pr.Variable, eo)
 	default:
 		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
 		return []string{""}
@@ -402,7 +413,7 @@ type varInfo struct {
 	scalarVal string
 }
 
-func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
+func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 	name := v.Name
 	// We categorize suffix operators into two classes:
 	//
@@ -442,7 +453,7 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 		} else {
 			n = len(fm.arguments)
 		}
-		return fm.splitWords(strconv.Itoa(n), so)
+		return fm.splitWords(strconv.Itoa(n), eo)
 	}
 	if v.Modifier != nil {
 		// Handle substitution operators first.
@@ -465,7 +476,7 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 			useArg = !info.null
 		case "?":
 			if !info.set {
-				argument := fm.compound(mod.Argument, noSplit)[0]
+				argument := fm.compound(mod.Argument, noSplitOrGlob)[0]
 				if argument == "" {
 					fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
 				} else {
@@ -475,7 +486,7 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 			}
 		case ":?":
 			if info.null {
-				argument := fm.compound(mod.Argument, noSplit)[0]
+				argument := fm.compound(mod.Argument, noSplitOrGlob)[0]
 				if argument == "" {
 					fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
 				} else {
@@ -484,9 +495,9 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 				// TODO: exit
 			}
 		case "#", "##":
-			return fm.trimVariable(info, mod.Argument, so, strings.TrimPrefix)
+			return fm.trimVariable(info, mod.Argument, eo, strings.TrimPrefix)
 		case "%", "%%":
-			return fm.trimVariable(info, mod.Argument, so, strings.TrimSuffix)
+			return fm.trimVariable(info, mod.Argument, eo, strings.TrimSuffix)
 		default:
 			// The parser doesn't parse other modifiers.
 			panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
@@ -494,9 +505,7 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 		if useArg {
 			// Expand the argument without word splitting, because we may need
 			// to assign it to the variable.
-			//
-			// TODO: Suppress pathname expansion when expanding the argument.
-			arg := fm.compound(mod.Argument, noSplit)[0]
+			arg := fm.compound(mod.Argument, noSplitOrGlob)[0]
 			if assignIfUse {
 				if info.normal {
 					fm.variables[v.Name] = arg
@@ -505,24 +514,24 @@ func (fm *frame) variable(v *parse.Variable, so splitOpt) []string {
 					// TODO: Is this a fatal error?
 				}
 			}
-			return fm.splitWords(arg, so)
+			return fm.splitWords(arg, eo)
 		}
 	}
 	// If we reach here, expand the variable itself.
 	if info.scalar {
-		return fm.splitWords(info.scalarVal, so)
+		return fm.splitWords(info.scalarVal, eo)
 	}
 	// $* or $@. Both have complex word splitting behavior, described in
 	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_05_02.
-	if so == split {
+	if eo == splitAndGlob {
 		var words []string
 		for _, arg := range fm.arguments[1:] {
 			if arg != "" {
-				words = append(words, fm.splitWords(arg, split)...)
+				words = append(words, fm.splitWords(arg, splitAndGlob)...)
 			}
 		}
 		return words
-	} else if so == noSplit || name == "*" && so == noSplitDQ {
+	} else if eo == noSplitOrGlob || name == "*" && eo == noSplitOrGlobDQ {
 		// POSIX leaves the behavior of $@ in a no-split environment that is not
 		// double quotes undefined; we let it behave like $*.
 		var sep string
@@ -571,25 +580,24 @@ func (fm *frame) specialScalarVar(name string) (string, bool, bool) {
 	}
 }
 
-func (fm *frame) trimVariable(info varInfo, argNode *parse.Compound, so splitOpt, f func(string, string) string) []string {
-	// TODO: Suppress pathname expansion when expanding the argument.
+func (fm *frame) trimVariable(info varInfo, argNode *parse.Compound, eo expandOpt, f func(string, string) string) []string {
 	// TODO: Implement pattern
-	arg := fm.compound(argNode, noSplit)[0]
+	arg := fm.compound(argNode, noSplitOrGlob)[0]
 	if info.scalar {
-		return fm.splitWords(f(info.scalarVal, arg), so)
+		return fm.splitWords(f(info.scalarVal, arg), eo)
 	}
 	// TODO: Support $* and $@
 	return nil
 }
 
-func (fm *frame) evalDQSegments(segs []*parse.Segment, so splitOpt) []string {
-	c := newConcatter(so)
+func (fm *frame) evalDQSegments(segs []*parse.Segment, eo expandOpt) []string {
+	c := newConcatter(eo)
 	for _, seg := range segs {
 		switch seg.Type {
 		case parse.StringSegment:
 			c.concat([]string{seg.Value})
 		case parse.ExpansionSegment:
-			c.concat(fm.primary(seg.Expansion, so))
+			c.concat(fm.primary(seg.Expansion, eo))
 		default:
 			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
 		}
@@ -597,8 +605,8 @@ func (fm *frame) evalDQSegments(segs []*parse.Segment, so splitOpt) []string {
 	return c.words
 }
 
-func (fm *frame) splitWords(s string, so splitOpt) []string {
-	if so != split {
+func (fm *frame) splitWords(s string, eo expandOpt) []string {
+	if eo != splitAndGlob {
 		return []string{s}
 	}
 	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
@@ -656,9 +664,9 @@ func (fm *frame) splitWords(s string, so splitOpt) []string {
 
 type concatter struct{ words []string }
 
-func newConcatter(so splitOpt) *concatter {
+func newConcatter(eo expandOpt) *concatter {
 	var words []string
-	if so == noSplit {
+	if eo == noSplitOrGlob {
 		words = []string{""}
 	}
 	return &concatter{words}
