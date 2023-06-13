@@ -765,6 +765,9 @@ func (md *Modifier) parse(p *parser, opt nodeOpt) {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
+	// TODO: Most other shells (dash, bash and ksh) allow the modifier argument
+	// to contain multiple words, even though it's not specified in POSIX.
+	// Support that too.
 	md.Argument = parse(p, &Compound{}, modifierArg)
 }
 
