@@ -118,6 +118,19 @@ printf ': %s\n' ${foo-$x}
 
 # TODO: Also test pathname expansion
 
+#### Arguments of assignment operators are preserved without field splitting in variable value
+x='a b c'
+printf ': %s\n' ${foo=$x}
+printf ': %s\n' "$foo"
+## STDOUT:
+: a
+: b
+: c
+: a b c
+## END
+
+# TODO: Also test absense of pathname expansion
+
 #### Length (#)
 echo ${#unset}
 null=

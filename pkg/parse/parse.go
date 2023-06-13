@@ -29,14 +29,15 @@ type Chunk struct {
 	AndOrs []*AndOr
 }
 
-var commandStopper = " ;)}&|"
-
 type nodeOpt uint
 
 const (
 	normal nodeOpt = iota
 	// In backquotes, and not in a bracketed construct within.
 	inBackquotes
+	// Modifier arguments admit a larger range of characters as bareword
+	// characters. See the comment before (*Primary).parse for details.
+	modifierArg
 )
 
 // Chunk = sw { AndOr sw }
@@ -46,6 +47,17 @@ func (ch *Chunk) parse(p *parser, opt nodeOpt) {
 		addTo(&ch.AndOrs, parse(p, &AndOr{}, opt))
 		p.whitespaceOrSemicolon()
 	}
+}
+
+// TODO: Only treat ) and } as command stoppers when there is an unclosed ( or
+// {.
+const commandStopper = "\r\n;)}&|"
+
+func (p *parser) mayParseCommand(opt nodeOpt) bool {
+	if opt == inBackquotes && p.nextIn("`") {
+		return false
+	}
+	return p.nextInCompl(commandStopper)
 }
 
 type AndOr struct {
@@ -321,8 +333,6 @@ type Compound struct {
 	Parts       []*Primary
 }
 
-var exprStopper = commandStopper + " \t\r\n<>("
-
 func (cp *Compound) parse(p *parser, opt nodeOpt) {
 	// TODO: Parse TildePrefix correctly in assignment RHS
 	if prefix := findTildePrefix(p.rest()); prefix != "" {
@@ -332,6 +342,34 @@ func (cp *Compound) parse(p *parser, opt nodeOpt) {
 	for p.mayParseExpr(opt) {
 		addTo(&cp.Parts, parse(p, &Primary{}, opt))
 	}
+}
+
+const (
+	// An expression is stopped where the command is stopped, another expression
+	// starts (" \t), a redirection starts ("<>"), or at "(".
+	//
+	// "(" isn't really necessary as an expression stopper, but all of dash,
+	// bash and ksh treat it as a syntax error in most places, and treating it
+	// as an expression stopper simplifies the parsing of function definition
+	// forms.
+	exprStopper = commandStopper + " \t<>("
+
+	// A modifier argument (the "foo" in "${a:-foo}") is terminated by "}". The
+	// usual expression stoppers are parsed as barewords characters; for
+	// example, in "${a:-&|  foo}", the entire "&|  foo" part can be parsed as
+	// one bareword. This is not specified by POSIX, but supported by all of
+	// dash, bash and ksh.
+	modifierArgExprStopper = " \t}"
+)
+
+func (p *parser) mayParseExpr(opt nodeOpt) bool {
+	if opt == modifierArg {
+		return p.nextInCompl(modifierArgExprStopper)
+	}
+	if opt == inBackquotes && p.nextIn("`") {
+		return false
+	}
+	return p.nextInCompl(exprStopper)
 }
 
 func findTildePrefix(s string) string {
@@ -344,7 +382,7 @@ func findTildePrefix(s string) string {
 		}
 		if r == '/' || runeIn(r, exprStopper) {
 			return s[:i]
-		} else if runeIn(r, barewordStopper) {
+		} else if runeIn(r, normalBarewordStopper) {
 			return ""
 		}
 	}
@@ -377,30 +415,44 @@ const (
 	VariablePrimary
 )
 
-var (
-	barewordStopper    = exprStopper + "'\"$`[]?*{"
-	rawBarewordStopper = barewordStopper + "\\"
+const (
+	nonBarewordStarter = "'\"$`[]?*"
+	// A bareword primary stops where the entire expression stops, or another
+	// non-bareword primary starts.
+	normalBarewordStopper         = exprStopper + nonBarewordStarter
+	normalVerbatimBarewordStopper = normalBarewordStopper + "\\"
+
+	// See comment of modifierArgExprStopper.
+	modifierArgBarewordStopper         = modifierArgExprStopper + nonBarewordStarter
+	modifierArgVerbatimBarewordStopper = modifierArgBarewordStopper + "\\"
 )
 
 func (pr *Primary) parse(p *parser, opt nodeOpt) {
-start:
+	barewordStopper := normalBarewordStopper
+	verbatimBarewordStopper := normalVerbatimBarewordStopper
+	if opt == modifierArg {
+		barewordStopper = modifierArgBarewordStopper
+		verbatimBarewordStopper = modifierArgVerbatimBarewordStopper
+	}
+
 	switch {
 	case p.nextInCompl(barewordStopper):
 		pr.Type = BarewordPrimary
 		// Optimization: Consume a prefix that does not contain backslashes.
-		// This avoid building a bytes.Buffer when the bareword is free of
-		// backslashes.
-		raw := p.consumeWhileNotIn(rawBarewordStopper)
+		// This avoid building a strings.Builder when the bareword is free of
+		// backslashes; we call that a "verbatim bareword".
+		value := p.consumeWhileNotIn(verbatimBarewordStopper)
 		if !p.hasPrefix("\\") {
 			// One of barewordStopper runes or EOF was encounterd.
-			pr.Value = raw
+			pr.Value = value
 			return
 		}
-		buf := bytes.NewBufferString(raw)
+		var sb strings.Builder
+		sb.WriteString(value)
 		lastBackslash := false
 		p.consumeWhile(func(r rune) bool {
 			if lastBackslash {
-				buf.WriteRune(r)
+				sb.WriteRune(r)
 				lastBackslash = false
 				return true
 			} else if r == '\\' {
@@ -409,11 +461,11 @@ start:
 			} else if runeIn(r, barewordStopper) {
 				return false
 			} else {
-				buf.WriteRune(r)
+				sb.WriteRune(r)
 				return true
 			}
 		})
-		pr.Value = buf.String()
+		pr.Value = sb.String()
 	case p.consumePrefix("'"):
 		pr.Type = SingleQuotedPrimary
 		begin := p.pos
@@ -490,7 +542,7 @@ start:
 		p.errorf("EOF where an expression is expected")
 	default:
 		p.skipInvalid()
-		goto start
+		pr.parse(p, opt)
 	}
 }
 
@@ -713,29 +765,10 @@ func (md *Modifier) parse(p *parser, opt nodeOpt) {
 		p.errorf("missing or invalid variable modifier, assuming ':-'")
 		md.Operator = ":-"
 	}
-	// TODO: All of dash, bash and ksh support multiple words in the modifier
-	// argument, and it seem to parse it in a special mode that preserves all
-	// spaces. For example, echo ${x:=foo  bar} results in x being assigned
-	// "foo  bar". We don't support multiple words at all now. Consider
-	// implementing it.
-	md.Argument = parse(p, &Compound{}, normal)
+	md.Argument = parse(p, &Compound{}, modifierArg)
 }
 
 // Lookahead.
-
-func (p *parser) mayParseCommand(opt nodeOpt) bool {
-	if opt == inBackquotes && p.nextIn("`") {
-		return false
-	}
-	return p.nextInCompl(commandStopper)
-}
-
-func (p *parser) mayParseExpr(opt nodeOpt) bool {
-	if opt == inBackquotes && p.nextIn("`") {
-		return false
-	}
-	return p.nextInCompl(exprStopper)
-}
 
 func (p *parser) nextIn(set string) bool {
 	r, size := utf8.DecodeRuneInString(p.rest())
