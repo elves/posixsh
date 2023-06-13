@@ -5,12 +5,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
-	"unicode/utf8"
 
 	"github.com/elves/posixsh/pkg/arith"
 	"github.com/elves/posixsh/pkg/parse"
@@ -174,7 +172,7 @@ func (fm *frame) form(f *parse.Form) int {
 		//
 		// TODO: Implement this.
 		for _, word := range f.Words {
-			name := fm.compound(word, noSplitOrGlob)[0]
+			name := fm.compound(word).expandOneWord()
 			fm.functions[name] = f.Body
 		}
 		return 0
@@ -238,7 +236,7 @@ func (fm *frame) form(f *parse.Form) int {
 			// Bash by default doesn't suppress either, and errors when the RHS
 			// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
 			// suppress pathname expansion, but not field splitting.
-			right := fm.compound(redir.Right, noSplitOrGlob)[0]
+			right := fm.compound(redir.Right).expandOneWord()
 			f, err := os.OpenFile(right, flag, 0644)
 			if err != nil {
 				continue
@@ -260,12 +258,12 @@ func (fm *frame) form(f *parse.Form) int {
 
 	// TODO: Temp assignment
 	for _, assign := range f.Assigns {
-		fm.variables[assign.LHS] = fm.compound(assign.RHS, noSplitOrGlob)[0]
+		fm.variables[assign.LHS] = fm.compound(assign.RHS).expandOneWord()
 	}
 
 	var words []string
 	for _, cp := range f.Words {
-		words = append(words, fm.compound(cp, splitAndGlob)...)
+		words = append(words, fm.compound(cp).expand(fm.ifs())...)
 	}
 	if len(words) == 0 {
 		return 0
@@ -319,52 +317,28 @@ func (fm *frame) form(f *parse.Form) int {
 	}
 }
 
-// Flag controlling expansion steps. POSIX groups expansions into three steps:
-//
-//  1. Tilde expansion, parameter expansion, command substitution and arithmetic
-//     expansion.
-//  2. Filed spltting.
-//  3. Path expansion.
-//  4. Quote removal.
-//
-// There are certain environments in which 2 and 3 are suppressed, and that is
-// controlled using this flag.
-//
-// Note that path expansion can be turned off by "set -f". In the context of
-// this flag, we only care about whether path expansion *would* be in effect if
-// "set -f" were not in effect.
-type expandOpt uint
-
-const (
-	splitAndGlob expandOpt = iota
-	// Suppresses word splitting and globbing. Using this value also causes
-	// compound and primary to always expand to exactly one string.
-	noSplitOrGlob
-	// The environment inside double quotes is almost the same as noSplitOrGlob,
-	// except when expanding $@, which has special rules inside double quotes.
-	noSplitOrGlobDQ
-)
-
-func (fm *frame) compound(cp *parse.Compound, eo expandOpt) []string {
+func (fm *frame) compound(cp *parse.Compound) expander {
 	if cp.TildePrefix != "" {
 		fmt.Fprintln(fm.files[2], "tilde not supported yet")
 	}
-	c := newConcatter(eo)
+	c := compound{}
 	for _, pr := range cp.Parts {
-		c.concat(fm.primary(pr, eo))
+		c.elems = append(c.elems, fm.primary(pr))
 	}
-	return c.words
+	return c
 }
 
-func (fm *frame) primary(pr *parse.Primary, eo expandOpt) []string {
+func (fm *frame) primary(pr *parse.Primary) expander {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
-		// Literals don't undergo word splitting
-		return []string{pr.Value}
+		// Literals don't undergo word splitting. Barewords are considered
+		// "quoted" for this purpose because any metacharacter has to be escaped
+		// to be considered part of a bareword.
+		return literal{pr.Value}
 	case parse.DoubleQuotedPrimary:
-		return fm.evalDQSegments(pr.Segments, noSplitOrGlobDQ)
+		return fm.dqSegments(pr.Segments)
 	case parse.ArithmeticPrimary:
-		result, err := arith.Eval(fm.evalDQSegments(pr.Segments, noSplitOrGlob)[0], fm.variables)
+		result, err := arith.Eval(fm.dqSegments(pr.Segments).expandOneWord(), fm.variables)
 		if err != nil {
 			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
 			// TODO: Exit?
@@ -372,10 +346,12 @@ func (fm *frame) primary(pr *parse.Primary, eo expandOpt) []string {
 		// Arithmetic expressions undergo word splitting.
 		//
 		// This seems unlikely to be useful (the result is a single number), but
-		// it's specified by POSIX and implemented by dash, bash and ksh.
+		// it's specified by POSIX and implemented by dash, bash and ksh. The
+		// following writes "1 1": "IFS=0; echo $(( 101 ))"
+		//
 		// Interestingly, zsh doesn't perform word splitting on the result of
 		// arithmetic expressions even with "setopt sh_word_split".
-		return fm.splitWords(strconv.FormatInt(result, 10), eo)
+		return scalar{strconv.FormatInt(result, 10)}
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
@@ -396,12 +372,12 @@ func (fm *frame) primary(pr *parse.Primary, eo expandOpt) []string {
 		}
 		// Removal of trailing newlines happens independently of and before word
 		// splitting.
-		return fm.splitWords(strings.TrimRight(string(output), "\n"), eo)
+		return scalar{strings.TrimRight(string(output), "\n")}
 	case parse.VariablePrimary:
-		return fm.variable(pr.Variable, eo)
+		return fm.variable(pr.Variable)
 	default:
 		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
-		return []string{""}
+		return literal{""}
 	}
 }
 
@@ -413,7 +389,7 @@ type varInfo struct {
 	scalarVal string
 }
 
-func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
+func (fm *frame) variable(v *parse.Variable) expander {
 	name := v.Name
 	// We categorize suffix operators into two classes:
 	//
@@ -476,7 +452,7 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 			// follow here. Dash seems to use the length of "$*" instead.
 			n = len(fm.arguments) - 1
 		}
-		return fm.splitWords(strconv.Itoa(n), eo)
+		return scalar{strconv.Itoa(n)}
 	}
 	if v.Modifier != nil {
 		mod := v.Modifier
@@ -498,7 +474,7 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 			useArg = !info.null
 		case "?":
 			if !info.set {
-				argument := fm.compound(mod.Argument, noSplitOrGlob)[0]
+				argument := fm.compound(mod.Argument).expandOneWord()
 				if argument == "" {
 					fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
 				} else {
@@ -508,7 +484,7 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 			}
 		case ":?":
 			if info.null {
-				argument := fm.compound(mod.Argument, noSplitOrGlob)[0]
+				argument := fm.compound(mod.Argument).expandOneWord()
 				if argument == "" {
 					fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
 				} else {
@@ -517,58 +493,31 @@ func (fm *frame) variable(v *parse.Variable, eo expandOpt) []string {
 				// TODO: exit
 			}
 		case "#", "##":
-			return fm.trimVariable(info, mod.Argument, eo, strings.TrimPrefix)
+			return fm.trimVariable(name, info.scalarVal, mod.Argument, strings.TrimPrefix)
 		case "%", "%%":
-			return fm.trimVariable(info, mod.Argument, eo, strings.TrimSuffix)
+			return fm.trimVariable(name, info.scalarVal, mod.Argument, strings.TrimSuffix)
 		default:
 			// The parser doesn't parse other modifiers.
 			panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
 		}
 		if useArg {
-			// Expand the argument without word splitting, because we may need
-			// to assign it to the variable.
-			arg := fm.compound(mod.Argument, noSplitOrGlob)[0]
+			arg := fm.compound(mod.Argument)
 			if assignIfUse {
 				if info.normal {
-					fm.variables[v.Name] = arg
+					fm.variables[v.Name] = arg.expandOneWord()
 				} else {
 					fmt.Fprintf(fm.files[2], "%v cannot be assigned\n", v.Name)
 					// TODO: Is this a fatal error?
 				}
 			}
-			// TODO: This is wrong if arg is "a b": it should remain unsplit.
-			return fm.splitWords(arg, eo)
+			return arg
 		}
 	}
 	// If we reach here, expand the variable itself.
 	if info.scalar {
-		return fm.splitWords(info.scalarVal, eo)
+		return scalar{info.scalarVal}
 	}
-	// $* or $@. Both have complex word splitting behavior, described in
-	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_05_02.
-	if eo == splitAndGlob {
-		var words []string
-		for _, arg := range fm.arguments[1:] {
-			if arg != "" {
-				words = append(words, fm.splitWords(arg, splitAndGlob)...)
-			}
-		}
-		return words
-	} else if eo == noSplitOrGlobDQ && name == "@" {
-		return fm.arguments[1:]
-	} else {
-		// POSIX leaves the behavior of $@ in a no-split environment that is not
-		// double quotes undefined; we let it behave like $*.
-		var sep string
-		ifs, set := fm.variables["IFS"]
-		if ifs != "" {
-			r, _ := utf8.DecodeRuneInString(ifs)
-			sep = string(r)
-		} else if !set {
-			sep = " "
-		}
-		return []string{strings.Join(fm.arguments[1:], sep)}
-	}
+	return array{fm.arguments[1:], fm.ifs, name == "@"}
 }
 
 func scalarVarInfo(value string, set, normal bool) varInfo {
@@ -601,107 +550,42 @@ func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	}
 }
 
-func (fm *frame) trimVariable(info varInfo, argNode *parse.Compound, eo expandOpt, f func(string, string) string) []string {
+func (fm *frame) trimVariable(name, scalarVal string, argNode *parse.Compound, f func(string, string) string) expander {
 	// TODO: Implement pattern
-	arg := fm.compound(argNode, noSplitOrGlob)[0]
-	if info.scalar {
-		return fm.splitWords(f(info.scalarVal, arg), eo)
+	pattern := fm.compound(argNode).expandOneWord()
+	if name == "*" || name == "@" {
+		elems := make([]string, len(fm.arguments)-1)
+		for i, arg := range fm.arguments[1:] {
+			elems[i] = f(arg, pattern)
+		}
+		return array{elems, fm.ifs, name == "@"}
+	} else {
+		return scalar{f(scalarVal, pattern)}
 	}
-	// TODO: Support $* and $@
-	return nil
 }
 
-func (fm *frame) evalDQSegments(segs []*parse.Segment, eo expandOpt) []string {
-	c := newConcatter(eo)
+func (fm *frame) dqSegments(segs []*parse.Segment) expander {
+	var elems []expander
 	for _, seg := range segs {
 		switch seg.Type {
 		case parse.StringSegment:
-			c.concat([]string{seg.Value})
+			elems = append(elems, literal{seg.Value})
 		case parse.ExpansionSegment:
-			c.concat(fm.primary(seg.Expansion, eo))
+			elems = append(elems, fm.primary(seg.Expansion))
 		default:
 			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
 		}
 	}
-	return c.words
+	return doubleQuoted{elems}
 }
 
-func (fm *frame) splitWords(s string, eo expandOpt) []string {
-	if eo != splitAndGlob {
-		return []string{s}
-	}
-	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
+func (fm *frame) ifs() string {
 	ifs, set := fm.variables["IFS"]
 	if !set {
-		ifs = " \t\n"
+		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
+		return " \t\n"
 	}
-	if ifs == "" {
-		return []string{s}
-	}
-	// The following implements the algorithm described in clause 3. Clause 1
-	// describes the default behavior, but it's consistent with the more general
-	// clause 3.
-	//
-	// The algorithm depends on a definition of "character", which is not
-	// explicitly specified in this section. This detail is important when IFS
-	// contains multi-byte codepoints. Dash seems to treat each byte as a
-	// character, whereas both ksh and bash treats each codepoint as a
-	// character. We follow the behavior of ksh and bash because it makes more
-	// sense.
-	var whitespaceRunes, nonWhitespaceRunes []rune
-	for _, r := range ifs {
-		if r == ' ' || r == '\t' || r == '\n' {
-			whitespaceRunes = append(whitespaceRunes, r)
-		} else {
-			nonWhitespaceRunes = append(nonWhitespaceRunes, r)
-		}
-	}
-	whitespaces := string(whitespaceRunes)
-	nonWhitespaces := string(nonWhitespaceRunes)
-
-	// a. Ignore leading and trailing IFS whitespaces.
-	s = strings.Trim(s, whitespaces)
-
-	delimPatterns := make([]string, 0, 2)
-	// b. Each occurrence of a non-whitespace IFS character, with optional
-	// leading and trailing IFS whitespaces, are considered delimiters.
-	if nonWhitespaces != "" {
-		p := "[" + regexp.QuoteMeta(nonWhitespaces) + "]"
-		if whitespaces != "" {
-			whitePattern := "[" + regexp.QuoteMeta(whitespaces) + "]*"
-			p = whitePattern + p + whitePattern
-		}
-		delimPatterns = append(delimPatterns, p)
-	}
-	// c. Non-zero-length IFS white space shall delimit a field.
-	if whitespaces != "" {
-		p := "[" + regexp.QuoteMeta(whitespaces) + "]+"
-		delimPatterns = append(delimPatterns, p)
-	}
-
-	// Apply splitting from rule b and c.
-	//
-	// TODO: Cache the compiled regexp.
-	return regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
-}
-
-type concatter struct{ words []string }
-
-func newConcatter(eo expandOpt) *concatter {
-	var words []string
-	if eo == noSplitOrGlob {
-		words = []string{""}
-	}
-	return &concatter{words}
-}
-
-func (c *concatter) concat(more []string) {
-	if len(c.words) == 0 {
-		c.words = more
-	} else if len(more) > 0 {
-		c.words[len(c.words)-1] += more[0]
-		c.words = append(c.words, more[1:]...)
-	}
+	return ifs
 }
 
 func cloneSlice[T any](s []T) []T {

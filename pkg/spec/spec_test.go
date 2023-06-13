@@ -28,7 +28,7 @@ type spec struct {
 	wantStderr []string
 }
 
-//go:embed oil posix
+//go:embed oil posix posix-ext
 var specFiles embed.FS
 
 var specs = parseSpecFilesInFS(specFiles)

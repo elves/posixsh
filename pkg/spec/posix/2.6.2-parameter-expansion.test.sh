@@ -8,6 +8,10 @@ bar bar
 /bin/sh 1x0 10x
 ## END
 
+#### Parameter with escaped or quoted right braces
+echo ${foo-\}} ${foo-"}"}
+## stdout: } }
+
 #### Use default values if unset (-)
 echo ${unset-default}
 null=
@@ -91,6 +95,28 @@ echo ${foo:+alt}
 
 alt
 ## END
+
+#### Substitution operators only evaluate arguments when needed
+foo=bar
+echo ${foo-`exit 1`}
+## stdout: bar
+
+#### Substitution operators respect the quoting of arguments
+printf ': %s\n' ${foo-"a b c"}
+## STDOUT:
+: a b c
+## END
+
+#### Arguments of substitution operators are subject to field splitting
+x='a b c'
+printf ': %s\n' ${foo-$x}
+## STDOUT:
+: a
+: b
+: c
+## END
+
+# TODO: Also test pathname expansion
 
 #### Length (#)
 echo ${#unset}
