@@ -48,10 +48,8 @@ import (
 // implementation that follows POSIX's evaluation model and preserves quotes
 // during the intermediate stages can work like this, but that's not how this
 // implementation works.)
-//
-// TODO: Actually implement pathname expansion.
 type expander interface {
-	// Perform field splitting and pre-globbing, if applicable.
+	// Expand with field splitting and pathname expansion enabled.
 	expand(ifs string) []globWord
 	// Expand without field splitting or pathname expansion. The result must be
 	// one word.

@@ -16,10 +16,13 @@ func (fm *frame) glob(words []globWord) []string {
 
 func (fm *frame) globOne(names []string, word globWord) []string {
 	if len(word) == 0 {
-		return names
+		// Empty word. This can result from field splitting, for example.
+		return append(names, "")
 	}
 	if len(word) == 1 && word[0].meta == 0 {
-		// No glob meta at all
+		// Word with no glob metacharacters. Because the code that builds
+		// globWord always merges neighboring text segments, such words always
+		// have exactly one text segment.
 		return append(names, word[0].text)
 	}
 	convertGlobWord(word).Glob(func(info glob.PathInfo) bool {
@@ -89,7 +92,7 @@ func convertCharClass(segs []globWordSegment) func(rune) bool {
 			sb.WriteString(seg.text)
 		}
 	}
-	// TODO: Support range
+	// TODO: Support range and class
 	s := sb.String()
 	if strings.HasPrefix(s, "!") {
 		s = s[1:]
