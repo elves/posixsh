@@ -515,8 +515,9 @@ func (pr *Primary) parse(p *parser, opt nodeOpt) {
 			addTo(&pr.Segments, parse(p, &Segment{}, &unmatchedLeftParens))
 		}
 		p.errorf("unterminated arithmetic expression")
-	case p.consumeRuneIn("[]*?") != "":
+	case p.hasPrefixIn("[", "]", "*", "?") != "":
 		pr.Type = WildcardCharPrimary
+		pr.Value = p.consume(1)
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
 		pr.Body = parse(p, &Chunk{}, inBackquotes)

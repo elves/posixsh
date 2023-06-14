@@ -263,7 +263,7 @@ func (fm *frame) form(f *parse.Form) int {
 
 	var words []string
 	for _, cp := range f.Words {
-		words = append(words, fm.compound(cp).expand(fm.ifs())...)
+		words = append(words, fm.glob(fm.compound(cp).expand(fm.ifs()))...)
 	}
 	if len(words) == 0 {
 		return 0
@@ -352,6 +352,8 @@ func (fm *frame) primary(pr *parse.Primary) expander {
 		// Interestingly, zsh doesn't perform word splitting on the result of
 		// arithmetic expressions even with "setopt sh_word_split".
 		return scalar{strconv.FormatInt(result, 10)}
+	case parse.WildcardCharPrimary:
+		return globMeta{pr.Value[0]}
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
