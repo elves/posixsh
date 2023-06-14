@@ -25,7 +25,17 @@ func (fm *frame) globOne(names []string, word globWord) []string {
 		// have exactly one text segment.
 		return append(names, word[0].text)
 	}
-	convertGlobWord(word).Glob(func(info glob.PathInfo) bool {
+	p := convertGlobWord(word)
+	if len(p.Segments) == 1 && glob.IsLiteral(p.Segments[0]) {
+		// [ and ] may be "downgraded" to normal characters when they can't form
+		// a valid character class, so it's possible that the word is literal
+		// text after all.
+		//
+		// TODO: Also handle the case where some slashes have been parsed to
+		// glob.Slash.
+		return append(names, p.Segments[0].(glob.Literal).Data)
+	}
+	p.Glob(func(info glob.PathInfo) bool {
 		names = append(names, info.Path)
 		return true
 	})
@@ -45,19 +55,23 @@ func convertGlobWord(word globWord) glob.Pattern {
 	for i := 0; i < len(word); i++ {
 		switch word[i].meta {
 		case '[':
+			parsedCharClass := false
 			for j := i + 1; j < len(word); j++ {
 				if word[j].meta == ']' {
 					matcher := convertCharClass(word[i+1 : j])
 					segs = append(segs, glob.Wild{
 						Type: glob.Question, Matchers: []func(rune) bool{matcher}})
 					i = j
+					parsedCharClass = true
 					break
 				}
 				if strings.Contains(word[j].text, "/") {
 					break
 				}
 			}
-			appendLiteral("[")
+			if !parsedCharClass {
+				appendLiteral("[")
+			}
 		case ']':
 			appendLiteral("]")
 		case '?':
