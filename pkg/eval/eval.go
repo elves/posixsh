@@ -178,10 +178,6 @@ func (fm *frame) form(f *parse.Form) int {
 		return 0
 	}
 	for _, redir := range f.Redirs {
-		if redir.RightFd {
-			fmt.Fprintln(fm.files[2], ">& not supported yet")
-			continue
-		}
 		var flag, defaultDst int
 		switch redir.Mode {
 		case parse.RedirInput, parse.RedirHeredoc:
@@ -217,31 +213,42 @@ func (fm *frame) form(f *parse.Form) int {
 			}()
 			src = r
 		} else {
-			// POSIX specifies the following in
-			// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07:
+			// POSIX specifies that the RHS of redirections do not undergo field
+			// splitting or pathname expansion, with the exception that
+			// interactive shells may perform pathname expansion if the result
+			// is one word
+			// (https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07).
 			//
-			// > For the other redirection operators [that are not "<<" or
-			// > "<<-"], the word that follows the redirection operator shall be
-			// > subjected to tilde expansion, parameter expansion, command
-			// > substitution, arithmetic expansion, and quote removal.
-			// > Pathname expansion shall not be performed on the word by a
-			// > non-interactive shell; an interactive shell may perform it, but
-			// > shall do so only when the expansion would result in one word.
+			// Dash and ksh follow this behavior.
 			//
-			// In other words, both field splitting and pathname expansion
-			// should be suppressed when evaluating the RHS of redirection
-			// operators.
-			//
-			// In reality, this only describes the behavior of dash and ksh.
 			// Bash by default doesn't suppress either, and errors when the RHS
 			// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
 			// suppress pathname expansion, but not field splitting.
 			right := fm.compound(redir.Right).expandOneWord()
-			f, err := os.OpenFile(right, flag, 0644)
-			if err != nil {
-				continue
+
+			if redir.RightFd {
+				if fd64, err := strconv.ParseInt(right, 10, 0); err == nil {
+					fd := int(fd64)
+					if 0 <= fd && fd < len(fm.files) {
+						src = fm.files[fd]
+					} else {
+						fmt.Fprintln(fm.files[2], "invalid FD:", right)
+						continue
+						// TODO: Fatal error?
+					}
+				} else {
+					fmt.Fprintln(fm.files[2], "not numeric FD:", right)
+					continue
+					// TODO: Fatal error?
+				}
+			} else {
+				f, err := os.OpenFile(right, flag, 0644)
+				if err != nil {
+					fmt.Fprintln(fm.files[2], "failed to open redirection target:", err)
+					continue
+				}
+				src = f
 			}
-			src = f
 		}
 		dst := redir.Left
 		if dst == -1 {
