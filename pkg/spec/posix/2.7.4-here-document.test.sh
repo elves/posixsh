@@ -94,13 +94,22 @@ $x $(echo foo) `echo bar` $(( 7*6 ))
 $x $(echo foo) `echo bar` $(( 7*6 ))
 ## END
 
-# TODO:
-# #### Stripping leading tabs with <<-
-# cat <<-EOF
-# 	line1
-# 	line2
-# 	EOF
-# ## STDOUT:
-# line1
-# line2
-# ## EOF
+#### Stripping leading tabs with <<-
+cat <<-EOF
+	line1
+		line2
+	EOF
+## STDOUT:
+line1
+line2
+## EOF
+
+#### - is part of the operator in <<-, not delimiter
+cat << -EOF
+	line1
+		line2
+-EOF
+## STDOUT:
+	line1
+		line2
+## EOF

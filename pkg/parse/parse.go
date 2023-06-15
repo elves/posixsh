@@ -185,15 +185,23 @@ func (as *Assign) parse(p *parser, opt nodeOpt) {
 
 type Heredoc struct {
 	node
-	delim  string
-	quoted bool
-	Value  string
+	delim            string
+	quoted           bool
+	stripLeadingTabs bool
+	Value            string
 }
+
+var leadingTabs = regexp.MustCompile(`(?m)^\t+`)
 
 // This function is called in (*Whitespaces).parse immediately after a \n,
 // for each pending Heredoc.
 func (hd *Heredoc) parse(p *parser, _ struct{}) {
 	begin := p.pos
+	if hd.stripLeadingTabs {
+		defer func() {
+			hd.Value = leadingTabs.ReplaceAllLiteralString(hd.Value, "")
+		}()
+	}
 	for i := p.pos; i < len(p.text); {
 		j := i + strings.IndexByte(p.text[i:], '\n')
 		iNext := j + 1
@@ -202,6 +210,9 @@ func (hd *Heredoc) parse(p *parser, _ struct{}) {
 			iNext = j
 		}
 		line := p.text[i:j]
+		if hd.stripLeadingTabs {
+			line = strings.TrimLeft(line, "\t")
+		}
 		if line == hd.delim {
 			hd.Value = p.text[begin:i]
 			p.pos = iNext
@@ -249,11 +260,15 @@ func (rd *Redir) parse(p *parser, opt nodeOpt) {
 			rd.Left = fd
 		}
 	}
+	stripLeadingTabs := false
 	switch {
 	case p.maybeMeta(">>"):
 		rd.Mode = RedirAppend
 	case p.maybeMeta("<>"):
 		rd.Mode = RedirInputOutput
+	case p.maybeMeta("<<-"):
+		rd.Mode = RedirHeredoc
+		stripLeadingTabs = true
 	case p.maybeMeta("<<"):
 		rd.Mode = RedirHeredoc
 	case p.maybeMeta(">"):
@@ -276,7 +291,7 @@ func (rd *Redir) parse(p *parser, opt nodeOpt) {
 	rd.Right = parse(p, &Compound{}, opt)
 	if rd.Mode == RedirHeredoc {
 		delim, quoted := parseHeredocDelim(p, rd.Right)
-		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted}
+		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted, stripLeadingTabs: stripLeadingTabs}
 		p.pendingHeredocs = append(p.pendingHeredocs, rd.Heredoc)
 	}
 }
