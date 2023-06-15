@@ -15,7 +15,7 @@ printf ': %s\n' $(echo foo bar)
 
 #### Arithmetic expansion
 IFS=0
-printf ': %s\n' $(( 100 + 1 ))
+printf ': %s\n' $(( 99 + 2 ))
 ## STDOUT:
 : 1
 : 1
