@@ -71,7 +71,7 @@ touch 'a b' bar foo
 x='a *'
 printf ': %s\n' $x
 # If pathname generation happens before field splitting, $x should expand to
-# exactly one filename, 'a b'.
+# one filename 'a b' first, and then split into two words a and b.
 ## STDOUT:
 : a
 : a b
