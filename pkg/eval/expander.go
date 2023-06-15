@@ -88,7 +88,7 @@ func (gm globMeta) expandOneWord() string        { return string([]byte{gm.m}) }
 type compound struct{ elems []expander }
 
 func (c compound) expand(ifs string) []globWord {
-	return expandElems(c.elems, func(e expander) []globWord {
+	return expandElems(nil, c.elems, func(e expander) []globWord {
 		return e.expand(ifs)
 	})
 }
@@ -101,7 +101,7 @@ func (c compound) expandOneWord() string {
 type doubleQuoted struct{ elems []expander }
 
 func (dq doubleQuoted) expand(ifs string) []globWord {
-	return expandElems(dq.elems, func(e expander) []globWord {
+	return expandElems([]globWord{nil}, dq.elems, func(e expander) []globWord {
 		// Special-case $@ inside double quotes.
 		if a, ok := e.(array); ok && a.isAt {
 			words := make([]globWord, len(a.elems))
@@ -150,8 +150,7 @@ func (a array) expandOneWord() string {
 	return strings.Join(a.elems, sep)
 }
 
-func expandElems(elems []expander, f func(expander) []globWord) []globWord {
-	var words []globWord
+func expandElems(words []globWord, elems []expander, f func(expander) []globWord) []globWord {
 	for _, elem := range elems {
 		more := f(elem)
 		if len(words) == 0 {
@@ -219,6 +218,10 @@ func split(s, ifs string) []string {
 	// character. We follow the behavior of ksh and bash because it makes more
 	// sense.
 	if ifs == "" {
+		if s == "" {
+			// Unquoted null words are deleted even with an empty IFS.
+			return nil
+		}
 		return []string{s}
 	}
 	// The following implements the algorithm described in clause 3. Clause 1
@@ -265,5 +268,14 @@ func split(s, ifs string) []string {
 	// Apply splitting from rule b and c.
 	//
 	// TODO: Cache the compiled regexp.
-	return regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
+	fields := regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
+	if len(fields) > 0 && fields[len(fields)-1] == "" {
+		// If the word ended with a delimiter, don't produce a final empty
+		// field. See posix-ext/2.6.5-field-splitting.test.sh for details.
+		//
+		// This also implements the deletion of words that expand to exactly one
+		// null field (see posix/2.6-word-expansion.test.sh).
+		fields = fields[:len(fields)-1]
+	}
+	return fields
 }
