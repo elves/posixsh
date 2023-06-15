@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"strconv"
 	"strings"
 	"sync"
@@ -325,14 +326,41 @@ func (fm *frame) form(f *parse.Form) int {
 }
 
 func (fm *frame) compound(cp *parse.Compound) expander {
-	if cp.TildePrefix != "" {
-		fmt.Fprintln(fm.files[2], "tilde not supported yet")
-	}
 	c := compound{}
+	if cp.TildePrefix != "" {
+		// The result of tilde expansion is considered "quoted" and not subject
+		// to further expansions.
+		c.elems = append(c.elems, literal{fm.home(cp.TildePrefix[1:])})
+	}
 	for _, pr := range cp.Parts {
 		c.elems = append(c.elems, fm.primary(pr))
 	}
 	return c
+}
+
+var (
+	userCurrent = user.Current
+	userLookup  = user.Lookup
+)
+
+func (fm *frame) home(uname string) string {
+	if uname == "" {
+		if home, set := fm.variables["HOME"]; set {
+			return home
+		}
+	}
+	var u *user.User
+	var err error
+	if uname == "" {
+		u, err = userCurrent()
+	} else {
+		u, err = userLookup(uname)
+	}
+	if err != nil {
+		fmt.Fprintf(fm.files[2], "can't get home of %v: %v\n", uname, err)
+		// TODO: Fatal error?
+	}
+	return u.HomeDir
 }
 
 func (fm *frame) primary(pr *parse.Primary) expander {

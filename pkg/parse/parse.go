@@ -335,7 +335,7 @@ type Compound struct {
 
 func (cp *Compound) parse(p *parser, opt nodeOpt) {
 	// TODO: Parse TildePrefix correctly in assignment RHS
-	if prefix := findTildePrefix(p.rest()); prefix != "" {
+	if prefix := findTildePrefix(p.rest(), opt); prefix != "" {
 		p.consume(len(prefix))
 		cp.TildePrefix = prefix
 	}
@@ -352,7 +352,9 @@ const (
 	// bash and ksh treat it as a syntax error in most places, and treating it
 	// as an expression stopper simplifies the parsing of function definition
 	// forms.
-	exprStopper = commandStopper + " \t<>("
+	normalExprStopper = commandStopper + " \t<>("
+
+	inBackquotesExprStopper = normalExprStopper + "`"
 
 	// A modifier argument (the "foo" in "${a:-foo}") is terminated by "}". The
 	// usual expression stoppers are parsed as barewords characters; for
@@ -362,27 +364,28 @@ const (
 	modifierArgExprStopper = " \t}"
 )
 
-func (p *parser) mayParseExpr(opt nodeOpt) bool {
-	if opt == modifierArg {
-		return p.nextInCompl(modifierArgExprStopper)
-	}
-	if opt == inBackquotes && p.nextIn("`") {
-		return false
-	}
-	return p.nextInCompl(exprStopper)
+var exprStopper = [...]string{
+	normal:       normalExprStopper,
+	inBackquotes: inBackquotesExprStopper,
+	modifierArg:  modifierArgExprStopper,
 }
 
-func findTildePrefix(s string) string {
+func (p *parser) mayParseExpr(opt nodeOpt) bool {
+	return p.nextInCompl(exprStopper[opt])
+}
+
+func findTildePrefix(s string, opt nodeOpt) string {
 	if !hasPrefix(s, "~") {
 		return ""
 	}
 	for i, r := range s {
 		if i == 0 {
+			// Skip the initial ~
 			continue
 		}
-		if r == '/' || runeIn(r, exprStopper) {
+		if r == '/' || runeIn(r, exprStopper[opt]) {
 			return s[:i]
-		} else if runeIn(r, normalBarewordStopper) {
+		} else if runeIn(r, barewordStopper[opt]) {
 			return ""
 		}
 	}
@@ -419,7 +422,7 @@ const (
 	nonBarewordStarter = "'\"$`[]?*"
 	// A bareword primary stops where the entire expression stops, or another
 	// non-bareword primary starts.
-	normalBarewordStopper         = exprStopper + nonBarewordStarter
+	normalBarewordStopper         = normalExprStopper + nonBarewordStarter
 	normalVerbatimBarewordStopper = normalBarewordStopper + "\\"
 
 	// See comment of modifierArgExprStopper.
@@ -427,13 +430,21 @@ const (
 	modifierArgVerbatimBarewordStopper = modifierArgBarewordStopper + "\\"
 )
 
+var barewordStopper = [...]string{
+	normal:       normalBarewordStopper,
+	inBackquotes: normalBarewordStopper,
+	modifierArg:  modifierArgBarewordStopper,
+}
+
+var verbatimBarewordStopper = [...]string{
+	normal:       normalVerbatimBarewordStopper,
+	inBackquotes: normalVerbatimBarewordStopper,
+	modifierArg:  modifierArgVerbatimBarewordStopper,
+}
+
 func (pr *Primary) parse(p *parser, opt nodeOpt) {
-	barewordStopper := normalBarewordStopper
-	verbatimBarewordStopper := normalVerbatimBarewordStopper
-	if opt == modifierArg {
-		barewordStopper = modifierArgBarewordStopper
-		verbatimBarewordStopper = modifierArgVerbatimBarewordStopper
-	}
+	barewordStopper := barewordStopper[opt]
+	verbatimBarewordStopper := verbatimBarewordStopper[opt]
 
 	switch {
 	case p.nextInCompl(barewordStopper):
