@@ -135,7 +135,7 @@ func (fm *Form) parse(p *parser, opt nodeOpt) {
 		return
 	}
 	fm.Type = NormalForm
-	if assignPattern.MatchString(p.rest()) {
+	for assignPattern.MatchString(p.rest()) {
 		addTo(&fm.Assigns, parse(p, &Assign{}, opt))
 		p.inlineWhitespace()
 	}
