@@ -228,7 +228,10 @@ func (fm *frame) form(f *parse.Form) int {
 			right := fm.compound(redir.Right).expandOneWord()
 
 			if redir.RightFd {
-				if fd64, err := strconv.ParseInt(right, 10, 0); err == nil {
+				if right == "-" {
+					// A nil src signifies that dst should be closed.
+					src = nil
+				} else if fd64, err := strconv.ParseInt(right, 10, 0); err == nil {
 					fd := int(fd64)
 					if 0 <= fd && fd < len(fm.files) {
 						src = fm.files[fd]
@@ -248,6 +251,7 @@ func (fm *frame) form(f *parse.Form) int {
 					fmt.Fprintln(fm.files[2], "failed to open redirection target:", err)
 					continue
 				}
+				defer f.Close()
 				src = f
 			}
 		}
@@ -260,8 +264,11 @@ func (fm *frame) form(f *parse.Form) int {
 			copy(newFiles, fm.files)
 			fm.files = newFiles
 		}
-		fm.files[dst] = src
-		defer src.Close()
+		if src == nil {
+			fmt.Fprintln(fm.files[2], "closing FD not implemented yet")
+		} else {
+			fm.files[dst] = src
+		}
 	}
 
 	// TODO: Temp assignment
