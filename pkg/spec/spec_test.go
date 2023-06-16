@@ -82,6 +82,9 @@ func skipReason(s spec) string {
 		if s.name == "Integer Overflow" {
 			return "overflow should be OK instead of BUG"
 		}
+		if s.name == "Dynamic parsing on empty string" {
+			return "not required by POSIX"
+		}
 		return ""
 	default:
 		if strings.HasPrefix(s.suite, "oil/") {

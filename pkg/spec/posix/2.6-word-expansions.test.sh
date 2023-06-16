@@ -97,7 +97,7 @@ printf ': %s\n' $x $(echo) $x$(echo) foo
 #### Non-null words expanding to a single null word is deleted
 x='   '
 printf ': %s\n' $x foo
-## STDOUT
+## STDOUT:
 : foo
 ## END
 

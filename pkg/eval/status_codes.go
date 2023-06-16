@@ -2,10 +2,10 @@ package eval
 
 // Status codes returned by the shell itself.
 //
-// POSIX only specifies the status code for [CommandNotExecutable] and
-// [CommandNotFound] and the status code when a command was killed by a signal.
-// Errors during expansion or redirection are only required to have status codes
-// between 1 and 125. See
+// POSIX only specifies the status code for [StatusCommandNotExecutable] and
+// [StatusCommandNotFound] and the status code when a command was killed by a
+// signal. Errors during expansion or redirection are only required to have
+// status codes between 1 and 125. See
 // https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_08_02.
 //
 // The practice of using 0 for no error is really well known, so we don't define
@@ -15,9 +15,11 @@ const (
 	//     $sh -c 'if;'
 	StatusSyntaxError = 2
 	// Same as dash; bash and zsh use 1. Tested with:
-	//     $sh -c 'echo $(( ?? ))'
-	//     $sh -c 'x=")"; echo $((x))'
-	StatusArithmeticExpressionError = 2
+	//     $sh -c 'echo $((1//2))'
+	StatusExpansionError = 2
+	// Same as dash; bash and zsh use 1. Tested with:
+	//     $sh -c 'cat < foo' # when foo doesn't exist
+	StatusRedirectionError = 2
 
 	StatusNotImplemented = 99
 
@@ -25,6 +27,7 @@ const (
 	StatusPipeError = 100
 	StatusWaitError = 101
 	StatusWaitOther = 102
+	StatusShellBug  = 103
 
 	// Specified by POSIX.
 	StatusCommandNotExecutable = 126

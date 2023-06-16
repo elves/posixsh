@@ -102,7 +102,7 @@ cat <<-EOF
 ## STDOUT:
 line1
 line2
-## EOF
+## END
 
 #### - is part of the operator in <<-, not delimiter
 cat << -EOF
@@ -112,7 +112,7 @@ cat << -EOF
 ## STDOUT:
 	line1
 		line2
-## EOF
+## END
 
 #### Official example
 cat <<eof1; cat <<eof2

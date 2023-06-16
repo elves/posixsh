@@ -20,6 +20,11 @@ type Evaler struct {
 	variables map[string]string
 	functions map[string]*parse.CompoundCommand
 	files     []*os.File
+	// POSIX requires all cases except "special built-in utility error" and
+	// "other utility (not a special builtin-in error)" to print a shell
+	// diagnostic message to the stderr, ignoring all active redirections. We
+	// save the initial stderr (files[2]) in this field for that purpose.
+	diagFile *os.File
 }
 
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
@@ -36,32 +41,35 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 		make(map[string]string),
 		make(map[string]*parse.CompoundCommand),
 		files,
+		files[2],
 	}
 }
 
 func (ev *Evaler) Eval(code string) int {
 	n, err := parse.Parse(code)
 	if err != nil {
-		fmt.Fprintln(ev.files[2], "parse error", err)
+		fmt.Fprintln(ev.diagFile, "syntax error:", err)
 		return StatusSyntaxError
 	}
-
 	return ev.EvalChunk(n)
 }
 
 func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
-	return ev.frame().chunk(n)
+	status, _ := ev.frame().chunk(n)
+	return status
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.diagFile, 0}
 }
 
 type frame struct {
-	arguments []string
-	variables map[string]string
-	functions map[string]*parse.CompoundCommand
-	files     []*os.File
+	arguments    []string
+	variables    map[string]string
+	functions    map[string]*parse.CompoundCommand
+	files        []*os.File
+	diagFile     *os.File
+	lastCmdSubst int
 }
 
 func (fm *frame) cloneForSubshell() *frame {
@@ -70,32 +78,88 @@ func (fm *frame) cloneForSubshell() *frame {
 		cloneSlice(fm.arguments),
 		cloneMap(fm.variables), cloneMap(fm.functions),
 		cloneSlice(fm.files),
+		fm.diagFile,
+		0,
 	}
 }
 
-func (fm *frame) chunk(ch *parse.Chunk) int {
-	var ret int
+// Prints a diagnostic message.
+func (fm *frame) diag(n parse.Node, format string, args ...any) {
+	// TODO: Incorporate range information in the error message.
+	fmt.Fprintf(fm.diagFile, format+"\n", args...)
+}
+
+// The rest of this file contains methods on (*frame) that implement the
+// execution of commands and expansion of words. The former group of methods
+// return (int, bool), and the latter return (expander, bool).
+//
+// The boolean flag is false iff there was a fatal error - an error that should
+// abort the evaluation process. This includes all the "shall exit" errors in
+// the "non-interactive shell" column of the table in
+// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_08_01:
+//
+//  - Shell language syntax error (implemented in the Eval function)
+//  - Special built-in utility error
+//  - Redirection error with special built-in utilities
+//  - Variable assignment error
+//  - Expansion error
+//
+// The following errors can be fatal depending on relevant options:
+//
+//  - Eligible non-zero exit codes when "set -e" is active
+//  - File already exits when "set -C" is active
+//
+// The following errors don't abort evaluation:
+//
+//  - Other utility (not a special built-in) error
+//  - Redirection error with compound commands
+//  - Redirection error with function execution
+//  - Redirection error with other utilities (not special built-ins)
+//  - Command not found
+//
+// Regardless of whether the error is fatal, the site that generates the error
+// prints a suitable message.
+//
+// Error conditions that are not covered by POSIX may or may not be treated as
+// fatal; they will have comments near them.
+//
+// POSIX also requires that interactive shells don't exit when there is an
+// error. That behavior is outside the scope of this package: evaluation always
+// stops when there is a fatal error, and it's up to the caller of this package
+// to decide whether that causes the process to exit.
+
+func (fm *frame) chunk(ch *parse.Chunk) (int, bool) {
+	var lastStatus int
 	for _, ao := range ch.AndOrs {
-		ret = fm.andOr(ao)
-	}
-	return ret
-}
-
-func (fm *frame) andOr(ao *parse.AndOr) int {
-	var ret int
-	for i, pp := range ao.Pipelines {
-		if i > 0 {
-			and := ao.AndOp[i-1]
-			if (and && ret != 0) || (!and && ret == 0) {
-				continue
-			}
+		status, ok := fm.andOr(ao)
+		if !ok {
+			return status, false
 		}
-		ret = fm.pipeline(pp)
+		lastStatus = status
 	}
-	return ret
+	return lastStatus, true
 }
 
-func (fm *frame) pipeline(ch *parse.Pipeline) int {
+func (fm *frame) andOr(ao *parse.AndOr) (int, bool) {
+	var lastStatus int
+	for i, pp := range ao.Pipelines {
+		if i > 0 && shouldSkipAndOr(ao.AndOp[i-1], lastStatus) {
+			continue
+		}
+		status, ok := fm.pipeline(pp)
+		if !ok {
+			return status, false
+		}
+		lastStatus = status
+	}
+	return lastStatus, true
+}
+
+func shouldSkipAndOr(and bool, lastStatus int) bool {
+	return (and && lastStatus != 0) || (!and && lastStatus == 0)
+}
+
+func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 	n := len(ch.Forms)
 	if n == 1 {
 		// Short path
@@ -111,12 +175,15 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 	for i := 0; i < n-1; i++ {
 		r, w, err := os.Pipe()
 		if err != nil {
-			fmt.Fprintln(fm.files[2], "pipe:", err)
+			// How to handle failure to create pipes is not covered by POSIX.
+			// We write the error message to diagFile, but treat it as a
+			// non-fatal error so that the script may recover from it.
 			for j := 0; j < i; j++ {
 				pipes[j][0].Close()
 				pipes[j][1].Close()
 			}
-			return StatusPipeError
+			fm.diag(ch, "unable to create pipe for pipeline:", err)
+			return StatusPipeError, true
 		}
 		pipes[i][0], pipes[i][1] = r, w
 	}
@@ -124,7 +191,8 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 	var wg sync.WaitGroup
 	wg.Add(n)
 
-	var ppRet int
+	var lastStatus int
+	var lastOK bool
 	for i, f := range ch.Forms {
 		var newFm *frame
 		if i < n-1 {
@@ -139,31 +207,39 @@ func (fm *frame) pipeline(ch *parse.Pipeline) int {
 			newFm.files[0] = pipes[i-1][0]
 		}
 		go func(i int, f *parse.Form) {
-			ret := newFm.form(f)
+			status, ok := newFm.form(f)
+			// All but the last form is run in a subshell, so even fatal errors
+			// in them don't terminate evaluation.
 			if i == n-1 {
-				ppRet = ret
+				lastStatus, lastOK = status, ok
 			}
+			// Close the pipes associated with this command. Use the files
+			// stored in pipes rather than newFm.files because the latter may
+			// have been modified due to redirections.
+			//
+			// TODO: Maybe the pipes should be closed when the redirection
+			// happened instead?
 			if i > 0 {
-				newFm.files[0].Close()
+				pipes[i-1][0].Close()
 			}
 			if i < n-1 {
-				newFm.files[1].Close()
+				pipes[i][1].Close()
 			}
 			wg.Done()
 		}(i, f)
 	}
 	wg.Wait()
-	return ppRet
+	return lastStatus, lastOK
 }
 
-func (fm *frame) compoundCommand(cc *parse.CompoundCommand) int {
+func (fm *frame) compoundCommand(cc *parse.CompoundCommand) (int, bool) {
 	if cc.Subshell {
 		fm = fm.cloneForSubshell()
 	}
 	return fm.chunk(cc.Body)
 }
 
-func (fm *frame) form(f *parse.Form) int {
+func (fm *frame) form(f *parse.Form) (int, bool) {
 	switch f.Type {
 	case parse.CompoundCommandForm:
 		return fm.compoundCommand(f.Body)
@@ -173,138 +249,78 @@ func (fm *frame) form(f *parse.Form) int {
 		//
 		// TODO: Implement this.
 		for _, word := range f.Words {
-			name := fm.compound(word).expandOneWord()
+			exp, ok := fm.compound(word)
+			if !ok {
+				return StatusExpansionError, false
+			}
+			name := exp.expandOneWord()
 			fm.functions[name] = f.Body
 		}
-		return 0
+		return 0, true
 	}
-	for _, redir := range f.Redirs {
-		var flag, defaultDst int
-		switch redir.Mode {
-		case parse.RedirInput, parse.RedirHeredoc:
-			flag = os.O_RDONLY
-			defaultDst = 0
-		case parse.RedirOutput:
-			flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-			defaultDst = 1
-		case parse.RedirAppend:
-			flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
-			defaultDst = 1
-		default:
-			fmt.Fprintln(fm.files[2], "unsupported redir", redir.Mode)
-			continue
-		}
-		var src *os.File
-		if redir.Mode == parse.RedirHeredoc {
-			r, w, err := os.Pipe()
-			if err != nil {
-				fmt.Fprintln(fm.files[2], "pipe:", err)
-				continue
-			}
-			content := redir.Heredoc.Value
-			go func() {
-				n, err := w.WriteString(content)
-				if n < len(content) {
-					fmt.Fprintln(fm.files[2], "short write", n, "<", len(content))
-				}
-				if err != nil {
-					fmt.Fprintln(fm.files[2], err)
-				}
-				w.Close()
-			}()
-			src = r
-		} else {
-			// POSIX specifies that the RHS of redirections do not undergo field
-			// splitting or pathname expansion, with the exception that
-			// interactive shells may perform pathname expansion if the result
-			// is one word
-			// (https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07).
-			//
-			// Dash and ksh follow this behavior.
-			//
-			// Bash by default doesn't suppress either, and errors when the RHS
-			// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
-			// suppress pathname expansion, but not field splitting.
-			right := fm.compound(redir.Right).expandOneWord()
 
-			if redir.RightFd {
-				if right == "-" {
-					// A nil src signifies that dst should be closed.
-					src = nil
-				} else if fd64, err := strconv.ParseInt(right, 10, 0); err == nil {
-					fd := int(fd64)
-					if 0 <= fd && fd < len(fm.files) {
-						src = fm.files[fd]
-					} else {
-						fmt.Fprintln(fm.files[2], "invalid FD:", right)
-						continue
-						// TODO: Fatal error?
-					}
-				} else {
-					fmt.Fprintln(fm.files[2], "not numeric FD:", right)
-					continue
-					// TODO: Fatal error?
-				}
-			} else {
-				f, err := os.OpenFile(right, flag, 0644)
-				if err != nil {
-					fmt.Fprintln(fm.files[2], "failed to open redirection target:", err)
-					continue
-				}
-				defer f.Close()
-				src = f
-			}
+	// See comment on the code path using this field.
+	fm.lastCmdSubst = 0
+
+	for _, rd := range f.Redirs {
+		status, ok, cleanup := fm.redir(rd)
+		if cleanup != nil {
+			defer cleanup()
 		}
-		dst := redir.Left
-		if dst == -1 {
-			dst = defaultDst
-		}
-		if dst >= len(fm.files) {
-			newFiles := make([]*os.File, dst+1)
-			copy(newFiles, fm.files)
-			fm.files = newFiles
-		}
-		if src == nil {
-			fmt.Fprintln(fm.files[2], "closing FD not implemented yet")
-		} else {
-			fm.files[dst] = src
+		if status != 0 {
+			// TODO: Make the error fatal if command is special builtin.
+			return status, ok
 		}
 	}
 
 	// TODO: Temp assignment
 	for _, assign := range f.Assigns {
-		fm.variables[assign.LHS] = fm.compound(assign.RHS).expandOneWord()
+		exp, ok := fm.compound(assign.RHS)
+		if !ok {
+			return StatusExpansionError, false
+		}
+		fm.variables[assign.LHS] = exp.expandOneWord()
 	}
 
 	var words []string
 	for _, cp := range f.Words {
-		words = append(words, fm.glob(fm.compound(cp).expand(fm.ifs()))...)
+		exp, ok := fm.compound(cp)
+		if !ok {
+			return StatusExpansionError, false
+		}
+		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
 	}
 	if len(words) == 0 {
-		return 0
+		// 2.9.1 Simple Commands:
+		//
+		// If there is no command name, but the command contained a command
+		// substitution, the command shall complete with the exit status of the
+		// last command substitution performed. Otherwise, the command shall
+		// complete with a zero exit status.
+		return fm.lastCmdSubst, true
 	}
 
 	// Functions?
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
 		fm.arguments = words
-		ret := fm.compoundCommand(fn)
+		status, ok := fm.compoundCommand(fn)
 		fm.arguments = oldArgs
-		return ret
+		return status, ok
 	}
 
 	// Builtins?
 	if builtin, ok := builtins[words[0]]; ok {
-		return builtin(fm, words[1:])
+		return builtin(fm, words[1:]), true
 	}
 
 	// External commands?
 	path, err := exec.LookPath(words[0])
 	if err != nil {
-		fmt.Fprintln(fm.files[2], "search:", err)
 		// TODO: Return StatusCommandNotExecutable if file exists but is not
 		// executable.
-		return StatusCommandNotFound
+		fm.diag(f, "command not found: %v", err)
+		return StatusCommandNotFound, true
 	}
 	words[0] = path
 
@@ -312,37 +328,150 @@ func (fm *frame) form(f *parse.Form) int {
 		Files: fm.files,
 	})
 	if err != nil {
-		fmt.Fprintln(fm.files[2], err)
-		return StatusCommandNotExecutable
+		fm.diag(f, "command not executable: %v", err)
+		return StatusCommandNotExecutable, true
 	}
 
 	state, err := proc.Wait()
 	if err != nil {
-		fmt.Fprintln(fm.files[2], err)
-		return StatusWaitError
+		fm.diag(f, "error waiting for process to finish: %v", err)
+		return StatusWaitError, true
 	}
 	if state.Exited() {
-		return state.ExitCode()
+		return state.ExitCode(), true
 	} else {
 		waitStatus := state.Sys().(syscall.WaitStatus)
 		if waitStatus.Signaled() {
-			return StatusSignalBase + int(waitStatus.Signal())
+			return StatusSignalBase + int(waitStatus.Signal()), true
 		}
-		return StatusWaitOther
+		return StatusWaitOther, true
 	}
 }
 
-func (fm *frame) compound(cp *parse.Compound) expander {
+// Returns a status code, whether to continue, and a clean up function (the
+// latter may be nil).
+func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
+	var flag, defaultDst int
+	switch rd.Mode {
+	case parse.RedirInput:
+		flag = os.O_RDONLY
+		defaultDst = 0
+	case parse.RedirOutput:
+		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		defaultDst = 1
+	case parse.RedirInputOutput:
+		flag = os.O_RDWR | os.O_CREATE
+		defaultDst = 0
+	case parse.RedirAppend:
+		flag = os.O_WRONLY | os.O_CREATE | os.O_APPEND
+		defaultDst = 1
+	case parse.RedirHeredoc:
+		// flag is not used for RedirHeredoc
+		defaultDst = 0
+	default:
+		fm.diag(rd, "bug: unkown redir mode: %v", rd.Mode)
+		return StatusShellBug, false, nil
+	}
+	var src *os.File
+	var cleanup func() error
+	if rd.Mode == parse.RedirHeredoc {
+		r, w, err := os.Pipe()
+		if err != nil {
+			fm.diag(rd, "unable to create pipe for heredoc: %v", err)
+			return StatusPipeError, true, nil
+		}
+		content := rd.Heredoc.Value
+		go func() {
+			n, err := w.WriteString(content)
+			if err != nil {
+				fm.diag(rd, "error writing to heredoc pipe: %v", err)
+			} else if n < len(content) {
+				fm.diag(rd, "short write on heredoc pipe: %v < %v", n, len(content))
+			}
+			w.Close()
+		}()
+		src = r
+	} else {
+		// POSIX specifies that the RHS of redirections do not undergo field
+		// splitting or pathname expansion, with the exception that
+		// interactive shells may perform pathname expansion if the result
+		// is one word
+		// (https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_07).
+		//
+		// Dash and ksh follow this behavior.
+		//
+		// Bash by default doesn't suppress either, and errors when the RHS
+		// expands to multiple words. Setting POSIXLY_CORRECT causes bash to
+		// suppress pathname expansion, but not field splitting.
+		exp, ok := fm.compound(rd.Right)
+		if !ok {
+			return StatusExpansionError, false, nil
+		}
+		right := exp.expandOneWord()
+
+		if rd.RightFd {
+			if right == "-" {
+				// A nil src signifies that dst should be closed.
+				src = nil
+			} else if fd64, err := strconv.ParseInt(right, 10, 0); err == nil {
+				fd := int(fd64)
+				if 0 <= fd && fd < len(fm.files) {
+					src = fm.files[fd]
+				} else {
+					fm.diag(rd, "source FD is out of range: %v", right)
+					return StatusRedirectionError, true, nil
+				}
+			} else {
+				fm.diag(rd, "source is not FD: %v", right)
+				return StatusRedirectionError, true, nil
+			}
+		} else {
+			f, err := os.OpenFile(right, flag, 0644)
+			if err != nil {
+				fm.diag(rd, "can't open redirection source: %v", err)
+				return StatusRedirectionError, true, nil
+			}
+			cleanup = f.Close
+			src = f
+		}
+	}
+	dst := rd.Left
+	if dst == -1 {
+		dst = defaultDst
+	}
+	if dst >= len(fm.files) {
+		newFiles := make([]*os.File, dst+1)
+		copy(newFiles, fm.files)
+		fm.files = newFiles
+	}
+	if src == nil {
+		// TODO
+		fm.diag(rd, "closing FD not implemented yet")
+		return StatusRedirectionError, false, nil
+	}
+	fm.files[dst] = src
+	return 0, true, cleanup
+}
+
+func (fm *frame) compound(cp *parse.Compound) (expander, bool) {
 	c := compound{}
 	if cp.TildePrefix != "" {
 		// The result of tilde expansion is considered "quoted" and not subject
 		// to further expansions.
-		c.elems = append(c.elems, literal{fm.home(cp.TildePrefix[1:])})
+		home, ok := fm.home(cp, cp.TildePrefix[1:])
+		if !ok {
+			return nil, false
+		}
+		c.elems = append(c.elems, literal{home})
 	}
 	for _, pr := range cp.Parts {
-		c.elems = append(c.elems, fm.primary(pr))
+		elem, ok := fm.primary(pr)
+		if !ok {
+			return nil, false
+		}
+		c.elems = append(c.elems, elem)
 	}
-	return c
+	return c, true
 }
 
 var (
@@ -350,10 +479,10 @@ var (
 	userLookup  = user.Lookup
 )
 
-func (fm *frame) home(uname string) string {
+func (fm *frame) home(n parse.Node, uname string) (string, bool) {
 	if uname == "" {
 		if home, set := fm.variables["HOME"]; set {
-			return home
+			return home, true
 		}
 	}
 	var u *user.User
@@ -364,26 +493,34 @@ func (fm *frame) home(uname string) string {
 		u, err = userLookup(uname)
 	}
 	if err != nil {
-		fmt.Fprintf(fm.files[2], "can't get home of %v: %v\n", uname, err)
-		// TODO: Fatal error?
+		if uname == "" {
+			fm.diag(n, "can't get home of current user: %v\n", err)
+		} else {
+			fm.diag(n, "can't get home of %v: %v\n", uname, err)
+		}
+		return "", false
 	}
-	return u.HomeDir
+	return u.HomeDir, true
 }
 
-func (fm *frame) primary(pr *parse.Primary) expander {
+func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 	switch pr.Type {
 	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
 		// Literals don't undergo word splitting. Barewords are considered
 		// "quoted" for this purpose because any metacharacter has to be escaped
 		// to be considered part of a bareword.
-		return literal{pr.Value}
+		return literal{pr.Value}, true
 	case parse.DoubleQuotedPrimary:
 		return fm.dqSegments(pr.Segments)
 	case parse.ArithmeticPrimary:
-		result, err := arith.Eval(fm.dqSegments(pr.Segments).expandOneWord(), fm.variables)
+		exp, ok := fm.dqSegments(pr.Segments)
+		if !ok {
+			return nil, false
+		}
+		result, err := arith.Eval(exp.expandOneWord(), fm.variables)
 		if err != nil {
-			fmt.Fprintln(fm.files[2], "bad arithmetic expression:", err)
-			// TODO: Exit?
+			fm.diag(pr, "bad arithmetic expression: %v", err)
+			return nil, false
 		}
 		// Arithmetic expressions undergo word splitting.
 		//
@@ -393,20 +530,21 @@ func (fm *frame) primary(pr *parse.Primary) expander {
 		//
 		// Interestingly, zsh doesn't perform word splitting on the result of
 		// arithmetic expressions even with "setopt sh_word_split".
-		return scalar{strconv.FormatInt(result, 10)}
+		return scalar{strconv.FormatInt(result, 10)}, true
 	case parse.WildcardCharPrimary:
-		return globMeta{pr.Value[0]}
+		return globMeta{pr.Value[0]}, true
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
-			fmt.Fprintln(fm.files[2], "pipe:", err)
-			return nil
+			fm.diag(pr, "unable to create pipe for command substitution: %v", err)
+			return nil, false
 		}
+		newFm := fm.cloneForSubshell()
+		newFm.files[1] = w
+		// TODO: Save exit status for use in commands that only have command
+		// substitutions
 		go func() {
-			stdout := fm.files[1]
-			fm.files[1] = w
-			fm.chunk(pr.Body)
-			fm.files[1] = stdout
+			fm.lastCmdSubst, _ = newFm.chunk(pr.Body)
 			w.Close()
 		}()
 		output, err := io.ReadAll(r)
@@ -416,13 +554,33 @@ func (fm *frame) primary(pr *parse.Primary) expander {
 		}
 		// Removal of trailing newlines happens independently of and before word
 		// splitting.
-		return scalar{strings.TrimRight(string(output), "\n")}
+		return scalar{strings.TrimRight(string(output), "\n")}, true
 	case parse.VariablePrimary:
 		return fm.variable(pr.Variable)
 	default:
-		fmt.Fprintln(fm.files[2], "primary of type", pr.Type, "not supported yet")
-		return literal{""}
+		// TODO
+		fm.diag(pr, "shell bug: unknown primary type %v", pr.Type)
+		return nil, false
 	}
+}
+
+func (fm *frame) dqSegments(segs []*parse.Segment) (expander, bool) {
+	var elems []expander
+	for _, seg := range segs {
+		switch seg.Type {
+		case parse.StringSegment:
+			elems = append(elems, literal{seg.Value})
+		case parse.ExpansionSegment:
+			exp, ok := fm.primary(seg.Expansion)
+			if !ok {
+				return nil, false
+			}
+			elems = append(elems, exp)
+		default:
+			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
+		}
+	}
+	return doubleQuoted{elems}, true
 }
 
 type varInfo struct {
@@ -433,7 +591,7 @@ type varInfo struct {
 	scalarVal string
 }
 
-func (fm *frame) variable(v *parse.Variable) expander {
+func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 	name := v.Name
 	// We categorize suffix operators into two classes:
 	//
@@ -496,7 +654,7 @@ func (fm *frame) variable(v *parse.Variable) expander {
 			// follow here. Dash seems to use the length of "$*" instead.
 			n = len(fm.arguments) - 1
 		}
-		return scalar{strconv.Itoa(n)}
+		return scalar{strconv.Itoa(n)}, true
 	}
 	if v.Modifier != nil {
 		mod := v.Modifier
@@ -518,23 +676,13 @@ func (fm *frame) variable(v *parse.Variable) expander {
 			useArg = !info.null
 		case "?":
 			if !info.set {
-				argument := fm.compound(mod.Argument).expandOneWord()
-				if argument == "" {
-					fmt.Fprintf(fm.files[2], "%v is unset\n", v.Name)
-				} else {
-					fmt.Fprintf(fm.files[2], "%v is unset: %v\n", v.Name, argument)
-				}
-				// TODO: exit
+				fm.complainBadVar(v.Name, "unset", mod.Argument)
+				return nil, false
 			}
 		case ":?":
 			if info.null {
-				argument := fm.compound(mod.Argument).expandOneWord()
-				if argument == "" {
-					fmt.Fprintf(fm.files[2], "%v is null or unset\n", v.Name)
-				} else {
-					fmt.Fprintf(fm.files[2], "%v is null or unset: %v\n", v.Name, argument)
-				}
-				// TODO: exit
+				fm.complainBadVar(v.Name, "null or unset", mod.Argument)
+				return nil, false
 			}
 		case "#", "##":
 			return fm.trimVariable(name, info.scalarVal, mod.Argument, strings.TrimPrefix)
@@ -545,23 +693,26 @@ func (fm *frame) variable(v *parse.Variable) expander {
 			panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
 		}
 		if useArg {
-			arg := fm.compound(mod.Argument)
+			arg, ok := fm.compound(mod.Argument)
+			if !ok {
+				return nil, false
+			}
 			if assignIfUse {
 				if info.normal {
 					fm.variables[v.Name] = arg.expandOneWord()
 				} else {
-					fmt.Fprintf(fm.files[2], "%v cannot be assigned\n", v.Name)
-					// TODO: Is this a fatal error?
+					fm.diag(v, "cannot assign to $%v", v.Name)
+					return nil, false
 				}
 			}
-			return arg
+			return arg, true
 		}
 	}
 	// If we reach here, expand the variable itself.
 	if info.scalar {
-		return scalar{info.scalarVal}
+		return scalar{info.scalarVal}, true
 	}
-	return array{fm.arguments[1:], fm.ifs, name == "@"}
+	return array{fm.arguments[1:], fm.ifs, name == "@"}, true
 }
 
 func scalarVarInfo(value string, set, normal bool) varInfo {
@@ -594,33 +745,37 @@ func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	}
 }
 
-func (fm *frame) trimVariable(name, scalarVal string, argNode *parse.Compound, f func(string, string) string) expander {
+func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
+	exp, ok := fm.compound(argNode)
+	if !ok {
+		return
+	}
+	arg := exp.expandOneWord()
+	// This intentionally uses files[2] rather than diagFile, because this is
+	// not a "shell diagnostic message" and should respect active redirections.
+	if arg == "" {
+		fmt.Fprintf(fm.files[2], "%v is %v\n", name, what)
+	} else {
+		fmt.Fprintf(fm.files[2], "%v is %v: %v\n", name, what, arg)
+	}
+}
+
+func (fm *frame) trimVariable(name, scalarVal string, argNode *parse.Compound, f func(string, string) string) (expander, bool) {
 	// TODO: Implement pattern
-	pattern := fm.compound(argNode).expandOneWord()
+	exp, ok := fm.compound(argNode)
+	if !ok {
+		return nil, false
+	}
+	pattern := exp.expandOneWord()
 	if name == "*" || name == "@" {
 		elems := make([]string, len(fm.arguments)-1)
 		for i, arg := range fm.arguments[1:] {
 			elems[i] = f(arg, pattern)
 		}
-		return array{elems, fm.ifs, name == "@"}
+		return array{elems, fm.ifs, name == "@"}, true
 	} else {
-		return scalar{f(scalarVal, pattern)}
+		return scalar{f(scalarVal, pattern)}, true
 	}
-}
-
-func (fm *frame) dqSegments(segs []*parse.Segment) expander {
-	var elems []expander
-	for _, seg := range segs {
-		switch seg.Type {
-		case parse.StringSegment:
-			elems = append(elems, literal{seg.Value})
-		case parse.ExpansionSegment:
-			elems = append(elems, fm.primary(seg.Expansion))
-		default:
-			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
-		}
-	}
-	return doubleQuoted{elems}
 }
 
 func (fm *frame) ifs() string {
