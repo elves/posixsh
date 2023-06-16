@@ -262,6 +262,19 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 	// See comment on the code path using this field.
 	fm.lastCmdSubst = 0
 
+	// The order of arguments > redirections > assignments is specified in
+	// 2.9.1 Simple Commands. POSIX allows for redirections and assignments to
+	// swap position if the command is a special builtin, but we don't do that.
+
+	var words []string
+	for _, cp := range f.Words {
+		exp, ok := fm.compound(cp)
+		if !ok {
+			return StatusExpansionError, false
+		}
+		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
+	}
+
 	for _, rd := range f.Redirs {
 		status, ok, cleanup := fm.redir(rd)
 		if cleanup != nil {
@@ -282,14 +295,6 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 		fm.variables[assign.LHS] = exp.expandOneWord()
 	}
 
-	var words []string
-	for _, cp := range f.Words {
-		exp, ok := fm.compound(cp)
-		if !ok {
-			return StatusExpansionError, false
-		}
-		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
-	}
 	if len(words) == 0 {
 		// 2.9.1 Simple Commands:
 		//
@@ -298,6 +303,13 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 		// last command substitution performed. Otherwise, the command shall
 		// complete with a zero exit status.
 		return fm.lastCmdSubst, true
+	}
+
+	// The order of special builtin > function > non-special builtin > external
+	// is specified in 2.9.1 Simple Commands.
+
+	if builtin, ok := specialBuiltins[words[0]]; ok {
+		return builtin(fm, words[1:])
 	}
 
 	// Functions?
