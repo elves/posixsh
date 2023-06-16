@@ -315,6 +315,8 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 	}
 
 	// External commands?
+	// TODO: Don't use exec.LookPath because it doesn't use
+	// fm.variables["PATH"].
 	path, err := exec.LookPath(words[0])
 	if err != nil {
 		// TODO: Return StatusCommandNotExecutable if file exists but is not
