@@ -209,3 +209,9 @@ until test $x -ge -1; do
     false
 done
 ## status: 0
+
+# TODO: Test more complex conditions in if, while, until
+
+# TODO: Test redirections in non-simple commands
+
+# TODO: Test function definition
