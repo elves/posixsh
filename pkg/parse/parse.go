@@ -225,7 +225,11 @@ func parseFor(p *parser, opt nodeOpt) For {
 		}
 	}
 	p.whitespaceOrSemicolon()
-	data.Body = parseDo(p, opt)
+	if !p.maybeWord("do", opt) {
+		p.errorf(`expect keyword "do"`)
+	}
+	p.whitespaceOrSemicolon()
+	data.Body = parseAndOrsTerminatedBy(p, opt, "done")
 	return data
 }
 
@@ -291,50 +295,79 @@ func parseCase(p *parser, opt nodeOpt) Case {
 }
 
 type If struct {
-	Conditions []*Chunk
-	Bodies     []*Chunk
+	Conditions [][]*AndOr
+	Bodies     [][]*AndOr
+	ElseBody   []*AndOr
 }
 
 func parseIf(p *parser, opt nodeOpt) If {
 	var data If
-	return data
+branches:
+	for {
+		addTo(&data.Conditions, parseAndOrsTerminatedBy(p, opt, "then"))
+		var body []*AndOr
+		for p.mayParseCommand(opt) {
+			if p.maybeWord("fi", opt) {
+				p.whitespaceOrSemicolon()
+				addTo(&data.Bodies, body)
+				return data
+			} else if p.maybeWord("else", opt) {
+				p.whitespaceOrSemicolon()
+				addTo(&data.Bodies, body)
+				data.ElseBody = parseAndOrsTerminatedBy(p, opt, "fi")
+				return data
+			} else if p.maybeWord("elif", opt) {
+				p.whitespaceOrSemicolon()
+				addTo(&data.Bodies, body)
+				continue branches
+			}
+			addTo(&body, parse(p, &AndOr{}, opt))
+			p.whitespaceOrSemicolon()
+		}
+		p.whitespaceOrSemicolon()
+		addTo(&data.Bodies, body)
+		p.errorf(`expect "fi", "else" or "elif"`)
+		return data
+	}
 }
 
 type While struct {
-	Condition *Chunk
-	Body      *Chunk
+	Condition []*AndOr
+	Body      []*AndOr
 }
 
 func parseWhile(p *parser, opt nodeOpt) While {
-	var data While
-	return data
+	condition, body := parseWhileUntil(p, opt)
+	return While{condition, body}
 }
 
 type Until struct {
-	Condition *Chunk
-	Body      *Chunk
+	Condition []*AndOr
+	Body      []*AndOr
 }
 
 func parseUntil(p *parser, opt nodeOpt) Until {
-	var data Until
-	return data
+	condition, body := parseWhileUntil(p, opt)
+	return Until{condition, body}
 }
 
-func parseDo(p *parser, opt nodeOpt) []*AndOr {
+func parseWhileUntil(p *parser, opt nodeOpt) (condition, body []*AndOr) {
+	condition = parseAndOrsTerminatedBy(p, opt, "do")
+	body = parseAndOrsTerminatedBy(p, opt, "done")
+	return
+}
+
+func parseAndOrsTerminatedBy(p *parser, opt nodeOpt, word string) []*AndOr {
 	var body []*AndOr
-	if !p.maybeWord("do", opt) {
-		p.errorf(`expect keyword "do"`)
-	}
-	p.whitespaceOrSemicolon()
 	for p.mayParseCommand(opt) {
-		if p.maybeWord("done", opt) {
+		if p.maybeWord(word, opt) {
 			p.whitespaceOrSemicolon()
 			return body
 		}
 		addTo(&body, parse(p, &AndOr{}, opt))
 		p.whitespaceOrSemicolon()
 	}
-	p.errorf(`expect keyword "done"`)
+	p.errorf(`expect keyword "%s"`, word)
 	return body
 }
 

@@ -426,15 +426,46 @@ func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
 }
 
 func (fm *frame) runIf(c *parse.Command, data parse.If) (int, bool) {
+	for i, condition := range data.Conditions {
+		status, ok := fm.andOrs(condition)
+		if !ok {
+			return status, false
+		}
+		if status == 0 {
+			return fm.andOrs(data.Bodies[i])
+		}
+	}
+	if data.ElseBody != nil {
+		return fm.andOrs(data.ElseBody)
+	}
 	return 0, true
 }
 
 func (fm *frame) runWhile(c *parse.Command, data parse.While) (int, bool) {
-	return 0, true
+	return fm.runWhileUntil(c, data.Condition, data.Body, true)
 }
 
 func (fm *frame) runUntil(c *parse.Command, data parse.Until) (int, bool) {
-	return 0, true
+	return fm.runWhileUntil(c, data.Condition, data.Body, false)
+}
+
+func (fm *frame) runWhileUntil(c *parse.Command, condition, body []*parse.AndOr, wantZero bool) (int, bool) {
+	lastStatus := 0
+	for {
+		status, ok := fm.andOrs(condition)
+		if !ok {
+			return status, false
+		}
+		if (status == 0) != wantZero {
+			break
+		}
+		status, ok = fm.andOrs(body)
+		if !ok {
+			return status, false
+		}
+		lastStatus = status
+	}
+	return lastStatus, true
 }
 
 // Returns a status code, whether to continue, and a clean up function (the
