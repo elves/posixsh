@@ -31,3 +31,30 @@ new
 ## status: 1
 
 # TODO: More status tests with $?
+
+#### for
+for x in foo bar; do
+    echo $x
+done
+## STDOUT:
+foo
+bar
+## END
+
+#### for without "in word..." defaulting to positional parameters
+set -- arg1 arg2
+for x; do
+    echo $x
+done
+## STDOUT:
+arg1
+arg2
+## END
+
+#### Status of for
+for cmd in true false; do
+    $cmd
+done
+## status: 1
+
+# TODO: More status tests with $?

@@ -18,7 +18,7 @@ import (
 type Evaler struct {
 	arguments []string
 	variables map[string]string
-	functions map[string]*parse.CompoundCommand
+	functions map[string]*parse.Form
 	files     []*os.File
 	// POSIX requires all cases except "special built-in utility error" and
 	// "other utility (not a special builtin-in error)" to print a shell
@@ -39,7 +39,7 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 	return &Evaler{
 		args,
 		make(map[string]string),
-		make(map[string]*parse.CompoundCommand),
+		make(map[string]*parse.Form),
 		files,
 		files[2],
 	}
@@ -66,7 +66,7 @@ func (ev *Evaler) frame() *frame {
 type frame struct {
 	arguments    []string
 	variables    map[string]string
-	functions    map[string]*parse.CompoundCommand
+	functions    map[string]*parse.Form
 	files        []*os.File
 	diagFile     *os.File
 	lastCmdSubst int
@@ -129,8 +129,12 @@ func (fm *frame) diag(n parse.Node, format string, args ...any) {
 // to decide whether that causes the process to exit.
 
 func (fm *frame) chunk(ch *parse.Chunk) (int, bool) {
+	return fm.andOrs(ch.AndOrs)
+}
+
+func (fm *frame) andOrs(aos []*parse.AndOr) (int, bool) {
 	var lastStatus int
-	for _, ao := range ch.AndOrs {
+	for _, ao := range aos {
 		status, ok := fm.andOr(ao)
 		if !ok {
 			return status, false
@@ -232,33 +236,34 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 	return lastStatus, lastOK
 }
 
-func (fm *frame) compoundCommand(cc *parse.CompoundCommand) (int, bool) {
-	if cc.Subshell {
-		fm = fm.cloneForSubshell()
+func (fm *frame) form(f *parse.Form) (int, bool) {
+	switch data := f.Data.(type) {
+	case parse.SimpleCommand:
+		return fm.simpleCommand(f, data)
+	case parse.FnDefCommand:
+		return fm.fnDefCommand(f, data)
+	// TODO: Handle redir for the rest of the types
+	case parse.GroupCommand:
+		return fm.chunk(data.Body)
+	case parse.SubshellGroupCommand:
+		return fm.cloneForSubshell().chunk(data.Body)
+	case parse.ForCommand:
+		return fm.forCommand(f, data)
+	case parse.CaseCommand:
+		return fm.caseCommand(f, data)
+	case parse.IfCommand:
+		return fm.ifCommand(f, data)
+	case parse.WhileCommand:
+		return fm.whileCommand(f, data)
+	case parse.UntilCommand:
+		return fm.untilCommand(f, data)
+	default:
+		fm.diag(f, "bug: unknown command type %T", f.Data)
+		return StatusShellBug, false
 	}
-	return fm.chunk(cc.Body)
 }
 
-func (fm *frame) form(f *parse.Form) (int, bool) {
-	switch f.Type {
-	case parse.CompoundCommandForm:
-		return fm.compoundCommand(f.Body)
-	case parse.FnDefinitionForm:
-		// According to POSIX, redirections in a function definition form apply
-		// when the function is defined.
-		//
-		// TODO: Implement this.
-		for _, word := range f.Words {
-			exp, ok := fm.compound(word)
-			if !ok {
-				return StatusExpansionError, false
-			}
-			name := exp.expandOneWord()
-			fm.functions[name] = f.Body
-		}
-		return 0, true
-	}
-
+func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bool) {
 	// See comment on the code path using this field.
 	fm.lastCmdSubst = 0
 
@@ -266,13 +271,9 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 	// 2.9.1 Simple Commands. POSIX allows for redirections and assignments to
 	// swap position if the command is a special builtin, but we don't do that.
 
-	var words []string
-	for _, cp := range f.Words {
-		exp, ok := fm.compound(cp)
-		if !ok {
-			return StatusExpansionError, false
-		}
-		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
+	words, ok := fm.expandCompounds(data.Words)
+	if !ok {
+		return StatusExpansionError, false
 	}
 
 	for _, rd := range f.Redirs {
@@ -316,7 +317,7 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
 		fm.arguments = words
-		status, ok := fm.compoundCommand(fn)
+		status, ok := fm.form(fn)
 		fm.arguments = oldArgs
 		return status, ok
 	}
@@ -360,6 +361,61 @@ func (fm *frame) form(f *parse.Form) (int, bool) {
 		}
 		return StatusWaitOther, true
 	}
+}
+
+func (fm *frame) fnDefCommand(f *parse.Form, data parse.FnDefCommand) (int, bool) {
+	exp, ok := fm.compound(data.Name)
+	if !ok {
+		return StatusExpansionError, false
+	}
+	name := exp.expandOneWord()
+	fm.functions[name] = data.Body
+	return 0, true
+}
+
+func (fm *frame) forCommand(f *parse.Form, data parse.ForCommand) (int, bool) {
+	exp, ok := fm.compound(data.VarName)
+	if !ok {
+		return StatusExpansionError, false
+	}
+	varName := exp.expandOneWord()
+	var values []string
+	if data.Values == nil {
+		values = fm.arguments[1:]
+	} else {
+		var ok bool
+		values, ok = fm.expandCompounds(data.Values)
+		if !ok {
+			return StatusExpansionError, false
+		}
+	}
+
+	var lastStatus int
+	for _, value := range values {
+		fm.variables[varName] = value
+		status, ok := fm.andOrs(data.Body)
+		if !ok {
+			return status, false
+		}
+		lastStatus = status
+	}
+	return lastStatus, true
+}
+
+func (fm *frame) caseCommand(f *parse.Form, data parse.CaseCommand) (int, bool) {
+	return 0, true
+}
+
+func (fm *frame) ifCommand(f *parse.Form, data parse.IfCommand) (int, bool) {
+	return 0, true
+}
+
+func (fm *frame) whileCommand(f *parse.Form, data parse.WhileCommand) (int, bool) {
+	return 0, true
+}
+
+func (fm *frame) untilCommand(f *parse.Form, data parse.UntilCommand) (int, bool) {
+	return 0, true
 }
 
 // Returns a status code, whether to continue, and a clean up function (the
@@ -465,6 +521,18 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 	}
 	fm.files[dst] = src
 	return 0, true, cleanup
+}
+
+func (fm *frame) expandCompounds(cps []*parse.Compound) ([]string, bool) {
+	var words []string
+	for _, cp := range cps {
+		exp, ok := fm.compound(cp)
+		if !ok {
+			return nil, false
+		}
+		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
+	}
+	return words, true
 }
 
 func (fm *frame) compound(cp *parse.Compound) (expander, bool) {

@@ -103,66 +103,239 @@ func (pp *Pipeline) parse(p *parser, opt nodeOpt) {
 
 type Form struct {
 	node
-	Type    FormType
+	// One of SimpleCommand, FnDefCommand, GroupCommand,
+	// SubshellGroupCommand, ForCommand, CaseCommand, IfCommand,
+	// WhileCommand, UntilCommand
+	Data    any
 	Assigns []*Assign
-	Words   []*Compound
 	Redirs  []*Redir
-	Body    *CompoundCommand // Non-nil for FnDefinitionForm and CompoundCommandForm
 }
 
-type FormType int
+type SimpleCommand struct {
+	Words []*Compound
+}
 
-const (
-	InvalidForm FormType = iota
-	NormalForm
-	FnDefinitionForm
-	CompoundCommandForm
+type FnDefCommand struct {
+	Name *Compound
+	Body *Form
+}
+
+type GroupCommand struct {
+	Body *Chunk
+}
+
+type SubshellGroupCommand struct {
+	Body *Chunk
+}
+
+var (
+	assignPattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z_0-9]*=`)
+	redirPattern  = regexp.MustCompile(`^[0-9]*[<>]`)
 )
 
-const digitSet = "0123456789"
-
-var assignPattern = regexp.MustCompile("^[a-zA-Z_][a-zA-Z_0-9]*=")
-
-// Form = w CompoundCommand
-//
-//	| w { Assign iw } { ( Redir | Compound ) iw }
-//	| w { Assign iw } { ( Redir | Compound ) iw } "(" iw ")" CompoundCommand
 func (fm *Form) parse(p *parser, opt nodeOpt) {
 	p.whitespace()
-	if p.hasPrefixIn("(", "{") != "" {
-		fm.Type = CompoundCommandForm
-		fm.Body = parse(p, &CompoundCommand{}, opt)
-		return
-	}
-	fm.Type = NormalForm
-	for assignPattern.MatchString(p.rest()) {
-		addTo(&fm.Assigns, parse(p, &Assign{}, opt))
-		p.inlineWhitespace()
-	}
-items:
+	// Parse assignments, possibly mixed with redirections.
 	for {
-		restPastDigits := strings.TrimLeft(p.rest(), digitSet)
-		switch {
-		case hasPrefix(restPastDigits, "<"), hasPrefix(restPastDigits, ">"):
+		if assignPattern.MatchString(p.rest()) {
+			addTo(&fm.Assigns, parse(p, &Assign{}, opt))
+			p.inlineWhitespace()
+		} else if redirPattern.MatchString(p.rest()) {
 			addTo(&fm.Redirs, parse(p, &Redir{}, opt))
-		case p.mayParseExpr(opt):
-			addTo(&fm.Words, parse(p, &Compound{}, opt))
-		default:
-			break items
+			p.inlineWhitespace()
+		} else {
+			break
 		}
-		p.inlineWhitespace()
 	}
-	if p.maybeMeta("(") {
-		// POSIX only requires supporting a single static function name, but we
-		// support arbitrary number of function names (which all get defined
-		// with the same body), and their values may be dynamic. Only zsh seems
-		// to allow this too.
-		fm.Type = FnDefinitionForm
-		// Parse a function definition.
-		p.inlineWhitespace()
+	switch {
+	case p.maybeMeta("{"):
+		fm.Data = GroupCommand{parse(p, &Chunk{}, normal)}
+		p.meta("}")
+	case p.maybeMeta("("):
+		fm.Data = SubshellGroupCommand{parse(p, &Chunk{}, normal)}
 		p.meta(")")
-		fm.Body = parse(p, &CompoundCommand{}, opt)
+	case p.maybeWord("for", opt):
+		p.inlineWhitespace()
+		fm.Data = parseFor(p, opt)
+	case p.maybeWord("case", opt):
+		p.inlineWhitespace()
+		fm.Data = parseCase(p, opt)
+	case p.maybeWord("if", opt):
+		p.inlineWhitespace()
+		fm.Data = parseIf(p, opt)
+	case p.maybeWord("while", opt):
+		p.inlineWhitespace()
+		fm.Data = parseWhile(p, opt)
+	case p.maybeWord("until", opt):
+		p.inlineWhitespace()
+		fm.Data = parseUntil(p, opt)
+	default:
+		var words []*Compound
+		for {
+			if redirPattern.MatchString(p.rest()) {
+				addTo(&fm.Redirs, parse(p, &Redir{}, opt))
+			} else if p.mayParseExpr(opt) {
+				addTo(&words, parse(p, &Compound{}, opt))
+			} else {
+				break
+			}
+			p.inlineWhitespace()
+		}
+		if len(words) == 1 && p.maybeMeta("(") {
+			p.inlineWhitespace()
+			p.meta(")")
+			body := parse(p, &Form{}, opt)
+			fm.Data = FnDefCommand{words[0], body}
+		} else {
+			fm.Data = SimpleCommand{words}
+		}
 	}
+	for redirPattern.MatchString(p.rest()) {
+		addTo(&fm.Redirs, parse(p, &Redir{}, opt))
+	}
+}
+
+func (p *parser) maybeWord(s string, opt nodeOpt) bool {
+	savePos := p.pos
+	if p.consumePrefix(s) && !p.mayParseExpr(opt) {
+		p.inlineWhitespace()
+		return true
+	}
+	p.pos = savePos
+	return false
+}
+
+type ForCommand struct {
+	VarName *Compound
+	// nil when there is no "in"; empty slice when "in" is followed by no word.
+	Values []*Compound
+	Body   []*AndOr
+}
+
+func parseFor(p *parser, opt nodeOpt) ForCommand {
+	var fc ForCommand
+	fc.VarName = parse(p, &Compound{}, opt)
+	p.inlineWhitespace()
+	if p.maybeWord("in", opt) {
+		fc.Values = []*Compound{}
+		p.inlineWhitespace()
+		for p.mayParseExpr(opt) {
+			addTo(&fc.Values, parse(p, &Compound{}, opt))
+			p.inlineWhitespace()
+		}
+	}
+	p.whitespaceOrSemicolon()
+	fc.Body = parseDo(p, opt)
+	return fc
+}
+
+type CaseCommand struct {
+	Word     *Compound
+	Patterns [][]*Compound
+	Bodies   [][]*AndOr
+}
+
+func parseCase(p *parser, opt nodeOpt) CaseCommand {
+	var cc CaseCommand
+	cc.Word = parse(p, &Compound{}, opt)
+	p.inlineWhitespace()
+	if !p.maybeWord("in", opt) {
+		p.errorf(`expect keyword "in"`)
+	}
+	p.whitespaceOrSemicolon()
+	for {
+		if p.maybeMeta("(") {
+			p.inlineWhitespace()
+		}
+		var pattern []*Compound
+		for {
+			addTo(&pattern, parse(p, &Compound{}, opt))
+			p.inlineWhitespace()
+			if p.maybeMeta("|") {
+				p.inlineWhitespace()
+			} else {
+				break
+			}
+		}
+		if p.maybeMeta(")") {
+			p.inlineWhitespace()
+		} else {
+			p.errorf(`expect ")"`)
+		}
+		seenDoubleSemicolon, seenEsac := false, false
+		var body []*AndOr
+		for p.mayParseCommand(opt) {
+			if p.maybeWord("esac", opt) {
+				p.whitespaceOrSemicolon()
+				seenEsac = true
+			}
+			addTo(&body, parse(p, &AndOr{}, opt))
+			p.whitespace()
+			if p.maybeMeta(";;") {
+				seenDoubleSemicolon = true
+				break
+			}
+			p.whitespaceOrSemicolon()
+		}
+		addTo(&cc.Patterns, pattern)
+		addTo(&cc.Bodies, body)
+		if seenEsac {
+			break
+		}
+		if !seenDoubleSemicolon {
+			p.errorf(`expect ";;" or "esac"`)
+			break
+		}
+	}
+	return cc
+}
+
+type IfCommand struct {
+	Conditions []*Chunk
+	Bodies     []*Chunk
+}
+
+func parseIf(p *parser, opt nodeOpt) IfCommand {
+	var ic IfCommand
+	return ic
+}
+
+type WhileCommand struct {
+	Condition *Chunk
+	Body      *Chunk
+}
+
+func parseWhile(p *parser, opt nodeOpt) WhileCommand {
+	var wc WhileCommand
+	return wc
+}
+
+type UntilCommand struct {
+	Condition *Chunk
+	Body      *Chunk
+}
+
+func parseUntil(p *parser, opt nodeOpt) UntilCommand {
+	var uc UntilCommand
+	return uc
+}
+
+func parseDo(p *parser, opt nodeOpt) []*AndOr {
+	var body []*AndOr
+	if !p.maybeWord("do", opt) {
+		p.errorf(`expect keyword "do"`)
+	}
+	p.whitespaceOrSemicolon()
+	for p.mayParseCommand(opt) {
+		if p.maybeWord("done", opt) {
+			p.whitespaceOrSemicolon()
+			return body
+		}
+		addTo(&body, parse(p, &AndOr{}, opt))
+		p.whitespaceOrSemicolon()
+	}
+	p.errorf(`expect keyword "done"`)
+	return body
 }
 
 type Assign struct {
@@ -245,6 +418,8 @@ const (
 	RedirHeredoc
 )
 
+const digitSet = "0123456789"
+
 // Redir = `[0-9]*` (">>" | "<>" | ">" | "<" | "<<") w [ "&" w ] Compound
 func (rd *Redir) parse(p *parser, opt nodeOpt) {
 	left := p.consumeWhileIn(digitSet)
@@ -312,33 +487,6 @@ func parseHeredocDelim(p *parser, cp *Compound) (delim string, quoted bool) {
 		}
 	}
 	return buf.String(), quoted
-}
-
-type CompoundCommand struct {
-	node
-	Subshell bool
-	Body     *Chunk
-}
-
-// CompoundCommand = w '{' Chunk w '}'
-//
-//	| w '(' Chunk w ')'
-func (cc *CompoundCommand) parse(p *parser, opt nodeOpt) {
-	p.whitespace()
-	closer := ""
-	switch {
-	case p.maybeMeta("("):
-		closer = ")"
-		cc.Subshell = true
-	case p.maybeMeta("{"):
-		closer = "}"
-	default:
-		p.errorf("missing '{' or '(' for compound command")
-	}
-	cc.Body = parse(p, &Chunk{}, normal)
-	if closer != "" {
-		p.meta(closer)
-	}
 }
 
 // Compound = [ TildePrefix ] { Primary }

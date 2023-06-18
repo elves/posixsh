@@ -70,6 +70,10 @@ func (p *parser) eof() bool {
 	return p.rest() == ""
 }
 
+func (p *parser) source(n Node) string {
+	return p.text[n.Begin():n.End()]
+}
+
 func (p *parser) errorf(format string, a ...interface{}) {
 	p.err.Errors = append(p.err.Errors,
 		ErrorEntry{p.recoverPos(p.pos), fmt.Sprintf(format, a...)})
