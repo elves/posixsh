@@ -5,38 +5,82 @@ import (
 	"io"
 )
 
-// Some builtins are designated "special" by POSIX; the return value includes a
-// bool because they can return a fatal error that terminates evaluation.
-//
-// For more details on how special builtins differ from non-special builtins,
-// see the code that uses this map.
-var specialBuiltins = map[string]func(*frame, []string) (int, bool){
-	":":   colon,
-	"set": set,
-}
-
-func colon(*frame, []string) (int, bool) {
-	return 0, true
-}
-
-// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#set
-func set(fm *frame, args []string) (int, bool) {
-	// TODO: Support outputting parameters.
-	// TODO: Support setting options.
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	fm.arguments = append([]string{fm.arguments[0]}, args...)
-	return 0, true
-}
-
 var builtins = map[string]func(*frame, []string) int{
-	"false": falseCmd,
-	"read":  read,
-	"true":  trueCmd,
+	"alias":   alias,
+	"bg":      bg,
+	"cd":      cd,
+	"false":   falseCmd,
+	"fc":      fc,
+	"fg":      fg,
+	"getopts": getopts,
+	"hash":    hash,
+	"jobs":    jobs,
+	"kill":    kill,
+	"newgrp":  newgrp,
+	"pwd":     pwd,
+	"read":    read,
+	"true":    trueCmd,
+	"umask":   umask,
+	"unalias": unalias,
+	"wait":    wait,
+}
+
+func alias(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func bg(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func cd(fm *frame, args []string) int {
+	// TODO
+	return 0
 }
 
 func falseCmd(*frame, []string) int { return 1 }
+
+func fc(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func fg(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func getopts(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func hash(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func jobs(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func kill(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func newgrp(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func pwd(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
 
 func read(fm *frame, args []string) int {
 	line := getLine(fm.files[0])
@@ -63,3 +107,18 @@ func getLine(r io.Reader) string {
 }
 
 func trueCmd(*frame, []string) int { return 0 }
+
+func umask(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func unalias(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func wait(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
