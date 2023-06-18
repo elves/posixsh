@@ -104,3 +104,108 @@ esac
 # status: 1
 
 # TODO: More status tests with $?
+
+#### if
+if true; then
+    echo true
+fi
+if false; then
+    echo false
+fi
+## stdout: true
+
+#### if with else
+if true; then
+    echo true
+else
+    echo true-else
+fi
+if false; then
+    echo false
+else
+    echo false-else
+fi
+## STDOUT:
+true
+false-else
+## END
+
+#### if with elif
+if false; then
+    echo false
+elif true; then
+    echo false-elif-true
+fi
+## stdout: false-elif-true
+
+# TODO: More cases?
+
+#### Status of if
+if true; then
+    false
+fi
+## status: 1
+
+#### Status of if when no branch is executed
+if false; then
+    false
+fi
+## status: 0
+
+# TODO: More status tests?
+
+#### while
+x=0
+while test $x -lt 4; do
+    echo $x
+    : $(( x += 1 ))
+done
+## STDOUT:
+0
+1
+2
+3
+## END
+
+#### Status of while
+x=0
+while test $x -lt 4; do
+    : $(( x += 1 ))
+    false
+done
+## status: 1
+
+#### Status of while when no loop is executed
+x=0
+while test $x -lt -1; do
+    false
+done
+## status: 0
+
+#### until
+x=0
+until test $x -ge 4; do
+    echo $x
+    : $(( x += 1 ))
+done
+## STDOUT:
+0
+1
+2
+3
+## END
+
+#### Status of while
+x=0
+until test $x -ge 4; do
+    : $(( x += 1 ))
+    false
+done
+## status: 1
+
+#### Status of while when no loop is executed
+x=0
+until test $x -ge -1; do
+    false
+done
+## status: 0
