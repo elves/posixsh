@@ -18,7 +18,7 @@ import (
 type Evaler struct {
 	arguments []string
 	variables map[string]string
-	functions map[string]*parse.Form
+	functions map[string]*parse.Command
 	files     []*os.File
 	// POSIX requires all cases except "special built-in utility error" and
 	// "other utility (not a special builtin-in error)" to print a shell
@@ -39,7 +39,7 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 	return &Evaler{
 		args,
 		make(map[string]string),
-		make(map[string]*parse.Form),
+		make(map[string]*parse.Command),
 		files,
 		files[2],
 	}
@@ -66,7 +66,7 @@ func (ev *Evaler) frame() *frame {
 type frame struct {
 	arguments    []string
 	variables    map[string]string
-	functions    map[string]*parse.Form
+	functions    map[string]*parse.Command
 	files        []*os.File
 	diagFile     *os.File
 	lastCmdSubst int
@@ -172,7 +172,7 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 			files := cloneSlice(fm.files)
 			defer func() { fm.files = files }()
 		}
-		return fm.form(f)
+		return fm.command(f)
 	}
 
 	pipes := make([][2]*os.File, n-1)
@@ -210,8 +210,8 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 		if i > 0 {
 			newFm.files[0] = pipes[i-1][0]
 		}
-		go func(i int, f *parse.Form) {
-			status, ok := newFm.form(f)
+		go func(i int, f *parse.Command) {
+			status, ok := newFm.command(f)
 			// All but the last form is run in a subshell, so even fatal errors
 			// in them don't terminate evaluation.
 			if i == n-1 {
@@ -236,34 +236,34 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 	return lastStatus, lastOK
 }
 
-func (fm *frame) form(f *parse.Form) (int, bool) {
-	switch data := f.Data.(type) {
-	case parse.SimpleCommand:
-		return fm.simpleCommand(f, data)
-	case parse.FnDefCommand:
-		return fm.fnDefCommand(f, data)
+func (fm *frame) command(c *parse.Command) (int, bool) {
+	switch data := c.Data.(type) {
+	case parse.Simple:
+		return fm.runSimple(c, data)
+	case parse.FnDef:
+		return fm.runFnDef(c, data)
 	// TODO: Handle redir for the rest of the types
-	case parse.GroupCommand:
+	case parse.Group:
 		return fm.chunk(data.Body)
-	case parse.SubshellGroupCommand:
+	case parse.SubshellGroup:
 		return fm.cloneForSubshell().chunk(data.Body)
-	case parse.ForCommand:
-		return fm.forCommand(f, data)
-	case parse.CaseCommand:
-		return fm.caseCommand(f, data)
-	case parse.IfCommand:
-		return fm.ifCommand(f, data)
-	case parse.WhileCommand:
-		return fm.whileCommand(f, data)
-	case parse.UntilCommand:
-		return fm.untilCommand(f, data)
+	case parse.For:
+		return fm.runFor(c, data)
+	case parse.Case:
+		return fm.runCase(c, data)
+	case parse.If:
+		return fm.runIf(c, data)
+	case parse.While:
+		return fm.runWhile(c, data)
+	case parse.Until:
+		return fm.runUntil(c, data)
 	default:
-		fm.diag(f, "bug: unknown command type %T", f.Data)
+		fm.diag(c, "bug: unknown command type %T", c.Data)
 		return StatusShellBug, false
 	}
 }
 
-func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bool) {
+func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	// See comment on the code path using this field.
 	fm.lastCmdSubst = 0
 
@@ -276,7 +276,7 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 		return StatusExpansionError, false
 	}
 
-	for _, rd := range f.Redirs {
+	for _, rd := range c.Redirs {
 		status, ok, cleanup := fm.redir(rd)
 		if cleanup != nil {
 			defer cleanup()
@@ -288,7 +288,7 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 	}
 
 	// TODO: Temp assignment
-	for _, assign := range f.Assigns {
+	for _, assign := range c.Assigns {
 		exp, ok := fm.compound(assign.RHS)
 		if !ok {
 			return StatusExpansionError, false
@@ -317,7 +317,7 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
 		fm.arguments = words
-		status, ok := fm.form(fn)
+		status, ok := fm.command(fn)
 		fm.arguments = oldArgs
 		return status, ok
 	}
@@ -334,7 +334,7 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 	if err != nil {
 		// TODO: Return StatusCommandNotExecutable if file exists but is not
 		// executable.
-		fm.diag(f, "command not found: %v", err)
+		fm.diag(c, "command not found: %v", err)
 		return StatusCommandNotFound, true
 	}
 	words[0] = path
@@ -343,13 +343,13 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 		Files: fm.files,
 	})
 	if err != nil {
-		fm.diag(f, "command not executable: %v", err)
+		fm.diag(c, "command not executable: %v", err)
 		return StatusCommandNotExecutable, true
 	}
 
 	state, err := proc.Wait()
 	if err != nil {
-		fm.diag(f, "error waiting for process to finish: %v", err)
+		fm.diag(c, "error waiting for process to finish: %v", err)
 		return StatusWaitError, true
 	}
 	if state.Exited() {
@@ -363,7 +363,7 @@ func (fm *frame) simpleCommand(f *parse.Form, data parse.SimpleCommand) (int, bo
 	}
 }
 
-func (fm *frame) fnDefCommand(f *parse.Form, data parse.FnDefCommand) (int, bool) {
+func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {
 	exp, ok := fm.compound(data.Name)
 	if !ok {
 		return StatusExpansionError, false
@@ -373,7 +373,7 @@ func (fm *frame) fnDefCommand(f *parse.Form, data parse.FnDefCommand) (int, bool
 	return 0, true
 }
 
-func (fm *frame) forCommand(f *parse.Form, data parse.ForCommand) (int, bool) {
+func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 	exp, ok := fm.compound(data.VarName)
 	if !ok {
 		return StatusExpansionError, false
@@ -402,19 +402,38 @@ func (fm *frame) forCommand(f *parse.Form, data parse.ForCommand) (int, bool) {
 	return lastStatus, true
 }
 
-func (fm *frame) caseCommand(f *parse.Form, data parse.CaseCommand) (int, bool) {
+func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
+	exp, ok := fm.compound(data.Word)
+	if !ok {
+		return StatusExpansionError, false
+	}
+	word := exp.expandOneWord()
+	for i, pattern := range data.Patterns {
+		for _, choice := range pattern {
+			exp, ok := fm.compound(choice)
+			if !ok {
+				return StatusExpansionError, false
+			}
+			// TODO: Support wildcard pattern
+			choice := exp.expandOneWord()
+			if word == choice {
+				return fm.andOrs(data.Bodies[i])
+			}
+		}
+	}
+	// No patterns are matched.
 	return 0, true
 }
 
-func (fm *frame) ifCommand(f *parse.Form, data parse.IfCommand) (int, bool) {
+func (fm *frame) runIf(c *parse.Command, data parse.If) (int, bool) {
 	return 0, true
 }
 
-func (fm *frame) whileCommand(f *parse.Form, data parse.WhileCommand) (int, bool) {
+func (fm *frame) runWhile(c *parse.Command, data parse.While) (int, bool) {
 	return 0, true
 }
 
-func (fm *frame) untilCommand(f *parse.Form, data parse.UntilCommand) (int, bool) {
+func (fm *frame) runUntil(c *parse.Command, data parse.Until) (int, bool) {
 	return 0, true
 }
 

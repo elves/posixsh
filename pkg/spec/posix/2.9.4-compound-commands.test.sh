@@ -58,3 +58,49 @@ done
 ## status: 1
 
 # TODO: More status tests with $?
+
+#### case
+x=foo
+case $x in
+bar) echo is bar
+     echo more
+     ;;
+foo) echo is foo ;;
+esac
+## stdout: is foo
+
+#### case with ( in pattern
+x=foo
+case $x in
+(bar) echo is bar ;;
+(foo) echo is foo ;;
+esac
+## stdout: is foo
+
+#### case with terminating ;; omitted
+x=foo
+case $x in
+(bar) echo is bar ;;
+(foo) echo is foo
+esac
+## stdout: is foo
+
+#### case with multiple choices in a branch
+x=foo
+case $x in
+bar) echo is bar ;;
+baz|foo) echo is baz or foo ;;
+esac
+## stdout: is baz or foo
+
+# TODO: Test pattern matching
+
+#### Status of case
+x=foo
+case $x in
+bar) true ;;
+foo) false ;;
+esac
+# status: 1
+
+# TODO: More status tests with $?

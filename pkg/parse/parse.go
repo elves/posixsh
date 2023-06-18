@@ -85,23 +85,23 @@ func (ao *AndOr) parse(p *parser, opt nodeOpt) {
 
 type Pipeline struct {
 	node
-	Forms []*Form
+	Forms []*Command
 }
 
 // Pipeline = Form iw { ("|" \ "||") w Form iw }
 func (pp *Pipeline) parse(p *parser, opt nodeOpt) {
-	addTo(&pp.Forms, parse(p, &Form{}, opt))
+	addTo(&pp.Forms, parse(p, &Command{}, opt))
 	p.inlineWhitespace()
 	for p.hasPrefix("|") && !p.hasPrefix("||") {
 		// | should be meta
 		p.consumePrefix("|")
 		p.whitespace()
-		addTo(&pp.Forms, parse(p, &Form{}, opt))
+		addTo(&pp.Forms, parse(p, &Command{}, opt))
 		p.inlineWhitespace()
 	}
 }
 
-type Form struct {
+type Command struct {
 	node
 	// One of SimpleCommand, FnDefCommand, GroupCommand,
 	// SubshellGroupCommand, ForCommand, CaseCommand, IfCommand,
@@ -111,20 +111,20 @@ type Form struct {
 	Redirs  []*Redir
 }
 
-type SimpleCommand struct {
+type Simple struct {
 	Words []*Compound
 }
 
-type FnDefCommand struct {
+type FnDef struct {
 	Name *Compound
-	Body *Form
+	Body *Command
 }
 
-type GroupCommand struct {
+type Group struct {
 	Body *Chunk
 }
 
-type SubshellGroupCommand struct {
+type SubshellGroup struct {
 	Body *Chunk
 }
 
@@ -133,7 +133,7 @@ var (
 	redirPattern  = regexp.MustCompile(`^[0-9]*[<>]`)
 )
 
-func (fm *Form) parse(p *parser, opt nodeOpt) {
+func (fm *Command) parse(p *parser, opt nodeOpt) {
 	p.whitespace()
 	// Parse assignments, possibly mixed with redirections.
 	for {
@@ -149,10 +149,10 @@ func (fm *Form) parse(p *parser, opt nodeOpt) {
 	}
 	switch {
 	case p.maybeMeta("{"):
-		fm.Data = GroupCommand{parse(p, &Chunk{}, normal)}
+		fm.Data = Group{parse(p, &Chunk{}, normal)}
 		p.meta("}")
 	case p.maybeMeta("("):
-		fm.Data = SubshellGroupCommand{parse(p, &Chunk{}, normal)}
+		fm.Data = SubshellGroup{parse(p, &Chunk{}, normal)}
 		p.meta(")")
 	case p.maybeWord("for", opt):
 		p.inlineWhitespace()
@@ -184,10 +184,10 @@ func (fm *Form) parse(p *parser, opt nodeOpt) {
 		if len(words) == 1 && p.maybeMeta("(") {
 			p.inlineWhitespace()
 			p.meta(")")
-			body := parse(p, &Form{}, opt)
-			fm.Data = FnDefCommand{words[0], body}
+			body := parse(p, &Command{}, opt)
+			fm.Data = FnDef{words[0], body}
 		} else {
-			fm.Data = SimpleCommand{words}
+			fm.Data = Simple{words}
 		}
 	}
 	for redirPattern.MatchString(p.rest()) {
@@ -205,39 +205,39 @@ func (p *parser) maybeWord(s string, opt nodeOpt) bool {
 	return false
 }
 
-type ForCommand struct {
+type For struct {
 	VarName *Compound
 	// nil when there is no "in"; empty slice when "in" is followed by no word.
 	Values []*Compound
 	Body   []*AndOr
 }
 
-func parseFor(p *parser, opt nodeOpt) ForCommand {
-	var fc ForCommand
-	fc.VarName = parse(p, &Compound{}, opt)
+func parseFor(p *parser, opt nodeOpt) For {
+	var data For
+	data.VarName = parse(p, &Compound{}, opt)
 	p.inlineWhitespace()
 	if p.maybeWord("in", opt) {
-		fc.Values = []*Compound{}
+		data.Values = []*Compound{}
 		p.inlineWhitespace()
 		for p.mayParseExpr(opt) {
-			addTo(&fc.Values, parse(p, &Compound{}, opt))
+			addTo(&data.Values, parse(p, &Compound{}, opt))
 			p.inlineWhitespace()
 		}
 	}
 	p.whitespaceOrSemicolon()
-	fc.Body = parseDo(p, opt)
-	return fc
+	data.Body = parseDo(p, opt)
+	return data
 }
 
-type CaseCommand struct {
+type Case struct {
 	Word     *Compound
 	Patterns [][]*Compound
 	Bodies   [][]*AndOr
 }
 
-func parseCase(p *parser, opt nodeOpt) CaseCommand {
-	var cc CaseCommand
-	cc.Word = parse(p, &Compound{}, opt)
+func parseCase(p *parser, opt nodeOpt) Case {
+	var data Case
+	data.Word = parse(p, &Compound{}, opt)
 	p.inlineWhitespace()
 	if !p.maybeWord("in", opt) {
 		p.errorf(`expect keyword "in"`)
@@ -277,8 +277,8 @@ func parseCase(p *parser, opt nodeOpt) CaseCommand {
 			}
 			p.whitespaceOrSemicolon()
 		}
-		addTo(&cc.Patterns, pattern)
-		addTo(&cc.Bodies, body)
+		addTo(&data.Patterns, pattern)
+		addTo(&data.Bodies, body)
 		if seenEsac {
 			break
 		}
@@ -287,37 +287,37 @@ func parseCase(p *parser, opt nodeOpt) CaseCommand {
 			break
 		}
 	}
-	return cc
+	return data
 }
 
-type IfCommand struct {
+type If struct {
 	Conditions []*Chunk
 	Bodies     []*Chunk
 }
 
-func parseIf(p *parser, opt nodeOpt) IfCommand {
-	var ic IfCommand
-	return ic
+func parseIf(p *parser, opt nodeOpt) If {
+	var data If
+	return data
 }
 
-type WhileCommand struct {
+type While struct {
 	Condition *Chunk
 	Body      *Chunk
 }
 
-func parseWhile(p *parser, opt nodeOpt) WhileCommand {
-	var wc WhileCommand
-	return wc
+func parseWhile(p *parser, opt nodeOpt) While {
+	var data While
+	return data
 }
 
-type UntilCommand struct {
+type Until struct {
 	Condition *Chunk
 	Body      *Chunk
 }
 
-func parseUntil(p *parser, opt nodeOpt) UntilCommand {
-	var uc UntilCommand
-	return uc
+func parseUntil(p *parser, opt nodeOpt) Until {
+	var data Until
+	return data
 }
 
 func parseDo(p *parser, opt nodeOpt) []*AndOr {
