@@ -86,7 +86,10 @@ func trap(*frame, []string) (int, bool) {
 	return 0, true
 }
 
-func unset(*frame, []string) (int, bool) {
-	// TODO
+func unset(fm *frame, args []string) (int, bool) {
+	// TODO: Support -fv
+	for _, name := range args {
+		delete(fm.variables, name)
+	}
 	return 0, true
 }
