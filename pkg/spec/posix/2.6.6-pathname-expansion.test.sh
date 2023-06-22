@@ -74,18 +74,13 @@ printf ': %s\n' ba[!rst]
 
 # TODO: Test character range [a-z] and [!a-z] when implemented
 
-# TODO: Test that [ is literal if not matched by ] before /
-# 
-# touch ax
-# echo a[x
-# echo a[x/]
-
 #### [ is literal if not matched by ] before /
 touch ax
 echo a[x
-# TODO: Also test this when it works: echo a[x/]
+echo a[x/]
 ## STDOUT:
 a[x
+a[x/]
 ## END
 
 #### Slashes must be matched explicitly

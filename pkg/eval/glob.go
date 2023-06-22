@@ -26,15 +26,12 @@ func (fm *frame) globOne(names []string, w word) []string {
 		// have exactly one text segment.
 		return append(names, w[0].text)
 	}
-	p := convertGlobWord(w)
-	if len(p.Segments) == 1 && glob.IsLiteral(p.Segments[0]) {
+	p, hasMeta := convertGlobWord(w)
+	if !hasMeta {
 		// [ and ] may be "downgraded" to normal characters when they can't form
 		// a valid character class, so it's possible that the word is literal
 		// text after all.
-		//
-		// TODO: Also handle the case where some slashes have been parsed to
-		// glob.Slash.
-		return append(names, p.Segments[0].(glob.Literal).Data)
+		return append(names, stringifyWord(w))
 	}
 	p.Glob(func(info glob.PathInfo) bool {
 		names = append(names, info.Path)
@@ -43,8 +40,11 @@ func (fm *frame) globOne(names []string, w word) []string {
 	return names
 }
 
-func convertGlobWord(w word) glob.Pattern {
+// Converts a word to glob.Pattern. Also returns whether any metacharacter has
+// been parsed - "?", "*" and "[" that is successfully matched.
+func convertGlobWord(w word) (glob.Pattern, bool) {
 	var segs []glob.Segment
+	hasMeta := false
 	appendLiteral := func(s string) {
 		if len(segs) > 0 && glob.IsLiteral(segs[len(segs)-1]) {
 			segs[len(segs)-1] = glob.Literal{
@@ -63,6 +63,7 @@ func convertGlobWord(w word) glob.Pattern {
 					segs = append(segs, glob.Wild{
 						Type: glob.Question, Matchers: []func(rune) bool{matcher}})
 					i = j
+					hasMeta = true
 					parsedCharClass = true
 					break
 				}
@@ -77,8 +78,10 @@ func convertGlobWord(w word) glob.Pattern {
 			appendLiteral("]")
 		case '?':
 			segs = append(segs, glob.Wild{Type: glob.Question})
+			hasMeta = true
 		case '*':
 			segs = append(segs, glob.Wild{Type: glob.Star})
+			hasMeta = true
 		default:
 			s := w[i].text
 			for s != "" {
@@ -95,7 +98,7 @@ func convertGlobWord(w word) glob.Pattern {
 			}
 		}
 	}
-	return glob.Pattern{Segments: segs}
+	return glob.Pattern{Segments: segs}, hasMeta
 }
 
 func convertCharClass(segs []wordSegment) func(rune) bool {
@@ -114,4 +117,16 @@ func convertCharClass(segs []wordSegment) func(rune) bool {
 		return func(r rune) bool { return !strings.ContainsRune(s, r) }
 	}
 	return func(r rune) bool { return strings.ContainsRune(s, r) }
+}
+
+func stringifyWord(w word) string {
+	var sb strings.Builder
+	for _, seg := range w {
+		if seg.meta != 0 {
+			sb.WriteByte(seg.meta)
+		} else {
+			sb.WriteString(seg.text)
+		}
+	}
+	return sb.String()
 }
