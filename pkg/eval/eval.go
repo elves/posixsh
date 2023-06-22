@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -414,9 +415,8 @@ func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
 			if !ok {
 				return StatusExpansionError, false
 			}
-			// TODO: Support wildcard pattern
-			choice := exp.expandOneString()
-			if word == choice {
+			choice := regexp.MustCompile("^" + regexpPatternFromWord(exp.expandOneWord(), false) + "$")
+			if choice.MatchString(word) {
 				return fm.andOrs(data.Bodies[i])
 			}
 		}
@@ -580,7 +580,7 @@ func (fm *frame) expandCompounds(cps []*parse.Compound) ([]string, bool) {
 		if !ok {
 			return nil, false
 		}
-		words = append(words, fm.glob(exp.expand(fm.ifs()))...)
+		words = append(words, generateFilenames(exp.expand(fm.ifs()))...)
 	}
 	return words, true
 }
@@ -690,9 +690,8 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 	case parse.VariablePrimary:
 		return fm.variable(pr.Variable)
 	default:
-		// TODO
 		fm.diag(pr, "shell bug: unknown primary type %v", pr.Type)
-		return nil, false
+		return literal{}, false
 	}
 }
 
@@ -816,13 +815,57 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 				fm.complainBadVar(v.Name, "null or unset", mod.Argument)
 				return nil, false
 			}
-		case "#", "##":
-			return fm.trimVariable(name, info.scalarVal, mod.Argument, strings.TrimPrefix)
-		case "%", "%%":
-			return fm.trimVariable(name, info.scalarVal, mod.Argument, strings.TrimSuffix)
+		case "#", "##", "%", "%%":
+			exp, ok := fm.compound(mod.Argument)
+			if !ok {
+				return nil, false
+			}
+			w := exp.expandOneWord()
+
+			// The function to apply to a single scalar variable, or each
+			// element of an array variable.
+			var transform func(string) string
+			switch mod.Operator {
+			case "#":
+				pattern := regexp.MustCompile("^" + regexpPatternFromWord(w, true))
+				transform = func(s string) string {
+					return pattern.ReplaceAllLiteralString(s, "")
+				}
+			case "##":
+				pattern := regexp.MustCompile("^" + regexpPatternFromWord(w, false))
+				transform = func(s string) string {
+					return pattern.ReplaceAllLiteralString(s, "")
+				}
+			case "%":
+				// Since Go's regexp engine always prefers the leftmost match,
+				// when removing the shortest suffix, it is not sufficient to
+				// translate * to .*? and anchor the pattern on the end with $;
+				// we also need to consume an arbitrary prefix as large as
+				// possible.
+				pattern := regexp.MustCompile("^((?s).*)" + regexpPatternFromWord(w, true) + "$")
+				transform = func(s string) string {
+					return pattern.ReplaceAllString(s, "$1")
+				}
+			case "%%":
+				pattern := regexp.MustCompile(regexpPatternFromWord(w, false) + "$")
+				transform = func(s string) string {
+					return pattern.ReplaceAllLiteralString(s, "")
+				}
+			}
+
+			if name == "*" || name == "@" {
+				elems := make([]string, len(fm.arguments)-1)
+				for i, arg := range fm.arguments[1:] {
+					elems[i] = transform(arg)
+				}
+				return array{elems, fm.ifs, name == "@"}, true
+			} else {
+				return scalar{transform(info.scalarVal)}, true
+			}
 		default:
 			// The parser doesn't parse other modifiers.
-			panic(fmt.Sprintf("bug: unknown operator %v", mod.Operator))
+			fm.diag(v, "bug: unknown operator %v", mod.Operator)
+			return literal{}, false
 		}
 		if useArg {
 			arg, ok := fm.compound(mod.Argument)
@@ -889,24 +932,6 @@ func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
 		fmt.Fprintf(fm.files[2], "%v is %v\n", name, what)
 	} else {
 		fmt.Fprintf(fm.files[2], "%v is %v: %v\n", name, what, arg)
-	}
-}
-
-func (fm *frame) trimVariable(name, scalarVal string, argNode *parse.Compound, f func(string, string) string) (expander, bool) {
-	// TODO: Implement pattern
-	exp, ok := fm.compound(argNode)
-	if !ok {
-		return nil, false
-	}
-	pattern := exp.expandOneString()
-	if name == "*" || name == "@" {
-		elems := make([]string, len(fm.arguments)-1)
-		for i, arg := range fm.arguments[1:] {
-			elems[i] = f(arg, pattern)
-		}
-		return array{elems, fm.ifs, name == "@"}, true
-	} else {
-		return scalar{f(scalarVal, pattern)}, true
 	}
 }
 

@@ -6,16 +6,16 @@ import (
 	"src.elv.sh/pkg/glob"
 )
 
-func (fm *frame) glob(words []word) []string {
+func generateFilenames(words []word) []string {
 	var names []string
 	for _, w := range words {
-		names = fm.globOne(names, w)
+		names = appendFilenames(names, w)
 	}
 	return names
 }
 
 // Perform pathname expansion on one word, appending to the names.
-func (fm *frame) globOne(names []string, w word) []string {
+func appendFilenames(names []string, w word) []string {
 	if len(w) == 0 {
 		// Empty word. This can result from field splitting, for example.
 		return append(names, "")
@@ -26,12 +26,12 @@ func (fm *frame) globOne(names []string, w word) []string {
 		// have exactly one text segment.
 		return append(names, w[0].text)
 	}
-	p, hasMeta := convertGlobWord(w)
+	p, hasMeta := globPatternFromWord(w)
 	if !hasMeta {
 		// [ and ] may be "downgraded" to normal characters when they can't form
 		// a valid character class, so it's possible that the word is literal
 		// text after all.
-		return append(names, stringifyWord(w))
+		return append(names, stringifySegs(w))
 	}
 	p.Glob(func(info glob.PathInfo) bool {
 		names = append(names, info.Path)
@@ -40,9 +40,9 @@ func (fm *frame) globOne(names []string, w word) []string {
 	return names
 }
 
-// Converts a word to glob.Pattern. Also returns whether any metacharacter has
-// been parsed - "?", "*" and "[" that is successfully matched.
-func convertGlobWord(w word) (glob.Pattern, bool) {
+// Converts a [word] to a [glob.Pattern]. Also returns whether any metacharacter
+// has been parsed - "?", "*" and "[" that is successfully matched.
+func globPatternFromWord(w word) (glob.Pattern, bool) {
 	var segs []glob.Segment
 	hasMeta := false
 	appendLiteral := func(s string) {
@@ -56,18 +56,24 @@ func convertGlobWord(w word) (glob.Pattern, bool) {
 	for i := 0; i < len(w); i++ {
 		switch w[i].meta {
 		case '[':
+			// TODO: O(n^2) if there are a lot of unmatched ['s.
 			parsedCharClass := false
+			unmatchedLeftBracket := 1
 			for j := i + 1; j < len(w); j++ {
-				if w[j].meta == ']' {
-					matcher := convertCharClass(w[i+1 : j])
-					segs = append(segs, glob.Wild{
-						Type: glob.Question, Matchers: []func(rune) bool{matcher}})
-					i = j
-					hasMeta = true
-					parsedCharClass = true
-					break
-				}
-				if strings.Contains(w[j].text, "/") {
+				if w[j].meta == '[' {
+					unmatchedLeftBracket++
+				} else if w[j].meta == ']' {
+					unmatchedLeftBracket--
+					if unmatchedLeftBracket == 0 {
+						matcher := convertCharClassToPredicate(stringifySegs(w[i+1 : j]))
+						segs = append(segs, glob.Wild{
+							Type: glob.Question, Matchers: []func(rune) bool{matcher}})
+						i = j
+						hasMeta = true
+						parsedCharClass = true
+						break
+					}
+				} else if strings.Contains(w[j].text, "/") {
 					break
 				}
 			}
@@ -75,6 +81,7 @@ func convertGlobWord(w word) (glob.Pattern, bool) {
 				appendLiteral("[")
 			}
 		case ']':
+			// If we reached here, the ] was not matched by a [.
 			appendLiteral("]")
 		case '?':
 			segs = append(segs, glob.Wild{Type: glob.Question})
@@ -101,17 +108,8 @@ func convertGlobWord(w word) (glob.Pattern, bool) {
 	return glob.Pattern{Segments: segs}, hasMeta
 }
 
-func convertCharClass(segs []wordSegment) func(rune) bool {
-	var sb strings.Builder
-	for _, seg := range segs {
-		if seg.meta != 0 {
-			sb.WriteByte(seg.meta)
-		} else {
-			sb.WriteString(seg.text)
-		}
-	}
+func convertCharClassToPredicate(s string) func(rune) bool {
 	// TODO: Support range and class
-	s := sb.String()
 	if strings.HasPrefix(s, "!") {
 		s = s[1:]
 		return func(r rune) bool { return !strings.ContainsRune(s, r) }
@@ -119,9 +117,9 @@ func convertCharClass(segs []wordSegment) func(rune) bool {
 	return func(r rune) bool { return strings.ContainsRune(s, r) }
 }
 
-func stringifyWord(w word) string {
+func stringifySegs(segs []wordSegment) string {
 	var sb strings.Builder
-	for _, seg := range w {
+	for _, seg := range segs {
 		if seg.meta != 0 {
 			sb.WriteByte(seg.meta)
 		} else {
