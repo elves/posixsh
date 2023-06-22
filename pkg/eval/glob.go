@@ -6,26 +6,27 @@ import (
 	"src.elv.sh/pkg/glob"
 )
 
-func (fm *frame) glob(words []globWord) []string {
+func (fm *frame) glob(words []word) []string {
 	var names []string
-	for _, word := range words {
-		names = fm.globOne(names, word)
+	for _, w := range words {
+		names = fm.globOne(names, w)
 	}
 	return names
 }
 
-func (fm *frame) globOne(names []string, word globWord) []string {
-	if len(word) == 0 {
+// Perform pathname expansion on one word, appending to the names.
+func (fm *frame) globOne(names []string, w word) []string {
+	if len(w) == 0 {
 		// Empty word. This can result from field splitting, for example.
 		return append(names, "")
 	}
-	if len(word) == 1 && word[0].meta == 0 {
+	if len(w) == 1 && w[0].meta == 0 {
 		// Word with no glob metacharacters. Because the code that builds
 		// globWord always merges neighboring text segments, such words always
 		// have exactly one text segment.
-		return append(names, word[0].text)
+		return append(names, w[0].text)
 	}
-	p := convertGlobWord(word)
+	p := convertGlobWord(w)
 	if len(p.Segments) == 1 && glob.IsLiteral(p.Segments[0]) {
 		// [ and ] may be "downgraded" to normal characters when they can't form
 		// a valid character class, so it's possible that the word is literal
@@ -42,7 +43,7 @@ func (fm *frame) globOne(names []string, word globWord) []string {
 	return names
 }
 
-func convertGlobWord(word globWord) glob.Pattern {
+func convertGlobWord(w word) glob.Pattern {
 	var segs []glob.Segment
 	appendLiteral := func(s string) {
 		if len(segs) > 0 && glob.IsLiteral(segs[len(segs)-1]) {
@@ -52,20 +53,20 @@ func convertGlobWord(word globWord) glob.Pattern {
 			segs = append(segs, glob.Literal{Data: s})
 		}
 	}
-	for i := 0; i < len(word); i++ {
-		switch word[i].meta {
+	for i := 0; i < len(w); i++ {
+		switch w[i].meta {
 		case '[':
 			parsedCharClass := false
-			for j := i + 1; j < len(word); j++ {
-				if word[j].meta == ']' {
-					matcher := convertCharClass(word[i+1 : j])
+			for j := i + 1; j < len(w); j++ {
+				if w[j].meta == ']' {
+					matcher := convertCharClass(w[i+1 : j])
 					segs = append(segs, glob.Wild{
 						Type: glob.Question, Matchers: []func(rune) bool{matcher}})
 					i = j
 					parsedCharClass = true
 					break
 				}
-				if strings.Contains(word[j].text, "/") {
+				if strings.Contains(w[j].text, "/") {
 					break
 				}
 			}
@@ -79,7 +80,7 @@ func convertGlobWord(word globWord) glob.Pattern {
 		case '*':
 			segs = append(segs, glob.Wild{Type: glob.Star})
 		default:
-			s := word[i].text
+			s := w[i].text
 			for s != "" {
 				i := strings.IndexByte(s, '/')
 				if i == -1 {
@@ -97,7 +98,7 @@ func convertGlobWord(word globWord) glob.Pattern {
 	return glob.Pattern{Segments: segs}
 }
 
-func convertCharClass(segs []globWordSegment) func(rune) bool {
+func convertCharClass(segs []wordSegment) func(rune) bool {
 	var sb strings.Builder
 	for _, seg := range segs {
 		if seg.meta != 0 {

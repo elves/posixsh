@@ -293,7 +293,7 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		if !ok {
 			return StatusExpansionError, false
 		}
-		fm.variables[assign.LHS] = exp.expandOneWord()
+		fm.variables[assign.LHS] = exp.expandOneString()
 	}
 
 	if len(words) == 0 {
@@ -368,7 +368,7 @@ func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {
 	if !ok {
 		return StatusExpansionError, false
 	}
-	name := exp.expandOneWord()
+	name := exp.expandOneString()
 	fm.functions[name] = data.Body
 	return 0, true
 }
@@ -378,7 +378,7 @@ func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 	if !ok {
 		return StatusExpansionError, false
 	}
-	varName := exp.expandOneWord()
+	varName := exp.expandOneString()
 	var values []string
 	if data.Values == nil {
 		values = fm.arguments[1:]
@@ -407,7 +407,7 @@ func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
 	if !ok {
 		return StatusExpansionError, false
 	}
-	word := exp.expandOneWord()
+	word := exp.expandOneString()
 	for i, pattern := range data.Patterns {
 		for _, choice := range pattern {
 			exp, ok := fm.compound(choice)
@@ -415,7 +415,7 @@ func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
 				return StatusExpansionError, false
 			}
 			// TODO: Support wildcard pattern
-			choice := exp.expandOneWord()
+			choice := exp.expandOneString()
 			if word == choice {
 				return fm.andOrs(data.Bodies[i])
 			}
@@ -527,7 +527,7 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 		if !ok {
 			return StatusExpansionError, false, nil
 		}
-		right := exp.expandOneWord()
+		right := exp.expandOneString()
 
 		if rd.RightFd {
 			if right == "-" {
@@ -649,7 +649,7 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		if !ok {
 			return nil, false
 		}
-		result, err := arith.Eval(exp.expandOneWord(), fm.variables)
+		result, err := arith.Eval(exp.expandOneString(), fm.variables)
 		if err != nil {
 			fm.diag(pr, "bad arithmetic expression: %v", err)
 			return nil, false
@@ -831,7 +831,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 			}
 			if assignIfUse {
 				if info.normal {
-					fm.variables[v.Name] = arg.expandOneWord()
+					fm.variables[v.Name] = arg.expandOneString()
 				} else {
 					fm.diag(v, "cannot assign to $%v", v.Name)
 					return nil, false
@@ -882,7 +882,7 @@ func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
 	if !ok {
 		return
 	}
-	arg := exp.expandOneWord()
+	arg := exp.expandOneString()
 	// This intentionally uses files[2] rather than diagFile, because this is
 	// not a "shell diagnostic message" and should respect active redirections.
 	if arg == "" {
@@ -898,7 +898,7 @@ func (fm *frame) trimVariable(name, scalarVal string, argNode *parse.Compound, f
 	if !ok {
 		return nil, false
 	}
-	pattern := exp.expandOneWord()
+	pattern := exp.expandOneString()
 	if name == "*" || name == "@" {
 		elems := make([]string, len(fm.arguments)-1)
 		for i, arg := range fm.arguments[1:] {
