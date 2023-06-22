@@ -113,14 +113,3 @@ cat << -EOF
 	line1
 		line2
 ## END
-
-#### Official example
-cat <<eof1; cat <<eof2
-Hi,
-eof1
-Helene.
-eof2
-## STDOUT:
-Hi,
-Helene.
-## END
