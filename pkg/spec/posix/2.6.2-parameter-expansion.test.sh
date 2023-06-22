@@ -107,7 +107,7 @@ printf ': %s\n' ${foo-"a b c"}
 : a b c
 ## END
 
-#### Arguments of substitution operators are subject to field splitting
+#### Argument value of substitution operator undergoes field splitting
 x='a b c'
 printf ': %s\n' ${foo-$x}
 ## STDOUT:
@@ -116,9 +116,16 @@ printf ': %s\n' ${foo-$x}
 : c
 ## END
 
-# TODO: Also test pathname expansion
+#### Argument value of substitution operator undergoes pathname expansion
+x='*'
+touch bar foo
+printf ': %s\n' ${foo-$x}
+## STDOUT:
+: bar
+: foo
+## END
 
-#### Arguments of assignment operators are preserved without field splitting in variable value
+#### Argument value of assignment operators is preserved without field splitting in variable value
 x='a b c'
 printf ': %s\n' ${foo=$x}
 printf ': %s\n' "$foo"
@@ -129,7 +136,16 @@ printf ': %s\n' "$foo"
 : a b c
 ## END
 
-# TODO: Also test absense of pathname expansion
+#### Argument value of assignment operators is preserved without pathname expansion in variable value
+x='*'
+touch bar foo
+printf ': %s\n' ${foo=$x}
+printf ': %s\n' "$foo"
+## STDOUT:
+: bar
+: foo
+: *
+## END
 
 #### Length (#)
 echo ${#unset}
@@ -143,6 +159,107 @@ echo ${#foo}
 3
 ## END
 
-# TODO: Test prefix and suffix removal
+#### Remove smallest suffix pattern (%)
+x='pa apa ap'
+echo "${x%p*}"
+## stdout: pa apa a
 
-# TODO: Add official examples
+#### Remove largest suffix pattern (%%)
+x='pa apa ap'
+echo "${x%%p*}"
+## stdout:
+
+#### Remove smallest prefix pattern (#)
+x='pa apa ap'
+echo "${x#*p}"
+## stdout: a apa ap
+
+#### Remove largest prefix pattern (##)
+x='pa apa ap'
+echo "${x##*p}"
+## stdout:
+
+#### Official example: ${parameter}
+a=1
+set 2
+echo ${a}b-$ab-${1}0-${10}-$10
+## stdout: 1b--20--20
+
+# TODO: Treat } as bareword when not matched by {
+# 
+# #### Official example: ${parameter-word}
+# foo=asdf
+# echo ${foo-bar}xyz}
+# foo=
+# echo ${foo-bar}xyz}
+# unset foo
+# echo ${foo-bar}xyz}
+# ## STDOUT:
+# asdfxyz}
+# xyz}
+# barxyz}
+# ## END
+
+#### Official example: ${parameter:-word} (adapted)
+x=foo
+echo ${x:-$(echo 1)}
+x=
+echo ${x:-$(echo 2)}
+unset x
+echo ${x:-$(echo 3)}
+## STDOUT:
+foo
+2
+3
+## END
+
+#### Official example: ${parameter:=word}
+unset X
+echo ${X:=abc}
+## stdout: abc
+
+# TODO: Enable when flexible matching of stderr is supported
+# 
+# #### Official example: ${parameter:?word}
+# unset posix
+# echo ${posix:?}
+
+#### Official example: ${parameter:+word}
+set a b c
+echo ${3:+posix}
+## stdout: posix
+
+#### Official example: ${#parameter}
+HOME=/usr/posix
+echo ${#HOME}
+## stdout: 10
+
+#### Official example: ${parameter%word}
+x=file.c
+echo ${x%.c}.o
+## stdout: file.o
+
+#### Official example: ${parameter%%word}
+x=posix/src/std
+echo ${x%%/*}
+## stdout: posix
+
+#### Official example: ${parameter#word} (adapted)
+HOME=/home/user
+x=$HOME/src/cmd
+echo ${x#$HOME}
+## stdout: /src/cmd
+
+#### Official example: ${parameter##word}
+x=/one/two/three
+echo ${x##*/}
+## stdout: three
+
+#### Official example: "${x#*}" vs ${x#"*"}
+x='*foo'
+echo "${x#*}"
+echo ${x#"*"}
+## STDOUT:
+*foo
+foo
+## END
