@@ -93,7 +93,13 @@ baz|foo) echo is baz or foo ;;
 esac
 ## stdout: is baz or foo
 
-# TODO: Test pattern matching
+#### case with pattern matching
+x=foo
+case $x in
+o*) echo starts with o ;;
+[fx]*) echo starts with f or x
+esac
+## stdout: starts with f or x
 
 #### Status of case
 x=foo
