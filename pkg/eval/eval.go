@@ -61,7 +61,7 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.diagFile, 0}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.diagFile, 0, 0, nil}
 }
 
 type frame struct {
@@ -71,6 +71,29 @@ type frame struct {
 	files        []*os.File
 	diagFile     *os.File
 	lastCmdSubst int
+	// The following two fields are used to implement break/continue inside
+	// for/while/until loops:
+	//
+	// - loopDepth is maintained by for/while/until and stores the number of
+	//   enclosing loops. It is examined by break/continue to decide which target
+	//   loop to break/continue to.
+	//
+	// - loopAbort is set by break/continue and examined by for/while/until,
+	//   which act accordingly when the loopAbort.dest matches the current loop
+	//   depth.
+	//
+	// The implementation is purely dynamic: it does not know which loops
+	// lexically enclose the break/continue command. POSIX leaves it unspecified
+	// whether break/continue should act on non-lexically enclosing loops, so
+	// this behavior is compliant. This behavior is only shared with zsh; dash,
+	// bash and ksh all only recognize lexically enclosing loops.
+	loopDepth int
+	loopAbort *loopAbort
+}
+
+type loopAbort struct {
+	dest int  // Destination value of loopDepth
+	next bool // True for continue, false for break
 }
 
 func (fm *frame) cloneForSubshell() *frame {
@@ -81,6 +104,8 @@ func (fm *frame) cloneForSubshell() *frame {
 		cloneSlice(fm.files),
 		fm.diagFile,
 		0,
+		0,
+		nil,
 	}
 }
 
@@ -394,13 +419,34 @@ func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 	var lastStatus int
 	for _, value := range values {
 		fm.variables[varName] = value
-		status, ok := fm.andOrs(data.Body)
+		status, ok, breaking := fm.runLoopBody(data.Body)
+		if breaking {
+			return 0, true
+		}
 		if !ok {
 			return status, false
 		}
 		lastStatus = status
 	}
 	return lastStatus, true
+}
+
+// Runs a loop body and handles break/continue if it's the correct level:
+//   - break causes the last return value to be true.
+//   - continue is turned into (0, true).
+func (fm *frame) runLoopBody(body []*parse.AndOr) (status int, ok, breaking bool) {
+	fm.loopDepth++
+	status, ok = fm.andOrs(body)
+	fm.loopDepth--
+	if !ok && fm.loopAbort != nil && fm.loopAbort.dest == fm.loopDepth {
+		abort := fm.loopAbort
+		fm.loopAbort = nil
+		if abort.next {
+			return 0, true, false
+		}
+		return 0, true, true
+	}
+	return status, ok, false
 }
 
 func (fm *frame) runCase(c *parse.Command, data parse.Case) (int, bool) {
@@ -459,7 +505,10 @@ func (fm *frame) runWhileUntil(c *parse.Command, condition, body []*parse.AndOr,
 		if (status == 0) != wantZero {
 			break
 		}
-		status, ok = fm.andOrs(body)
+		status, ok, breaking := fm.runLoopBody(body)
+		if breaking {
+			return 0, true
+		}
 		if !ok {
 			return status, false
 		}

@@ -22,7 +22,7 @@ const (
 	StatusRedirectionError = 2
 	// Same as dash and ksh; bash and zsh use 1. Tested with:
 	//     $sh -c 'unset -x'
-	StatusCommandLineError = 2
+	StatusBadCommandLine = 2
 
 	StatusNotImplemented = 99
 
