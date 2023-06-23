@@ -11,15 +11,18 @@ package eval
 // The practice of using 0 for no error is really well known, so we don't define
 // a constant for it; code should just use 0.
 const (
-	// Same as dash and bash; zsh uses 1. Tested with:
+	// Same as dash and bash; ksh uses 3, zsh uses 1. Tested with:
 	//     $sh -c 'if;'
 	StatusSyntaxError = 2
-	// Same as dash; bash and zsh use 1. Tested with:
+	// Same as dash; bash, ksh and zsh use 1. Tested with:
 	//     $sh -c 'echo $((1//2))'
 	StatusExpansionError = 2
-	// Same as dash; bash and zsh use 1. Tested with:
+	// Same as dash; bash, ksh and zsh use 1. Tested with:
 	//     $sh -c 'cat < foo' # when foo doesn't exist
 	StatusRedirectionError = 2
+	// Same as dash and ksh; bash and zsh use 1. Tested with:
+	//     $sh -c 'unset -x'
+	StatusCommandLineError = 2
 
 	StatusNotImplemented = 99
 

@@ -87,9 +87,23 @@ func trap(*frame, []string) (int, bool) {
 }
 
 func unset(fm *frame, args []string) (int, bool) {
-	// TODO: Support -fv
-	for _, name := range args {
-		delete(fm.variables, name)
+	opts, args, ok := fm.getopt(args, "fv")
+	if !ok {
+		return StatusCommandLineError, false
+	}
+	if opts.isSet('f') && opts.isSet('v') {
+		fm.badCommandLine("-f and -v are mutually exclusive")
+		return StatusCommandLineError, false
+	}
+	if opts.isSet('f') {
+		for _, name := range args {
+			delete(fm.functions, name)
+		}
+	} else {
+		// When neither -f and -v is specified, default to variable
+		for _, name := range args {
+			delete(fm.variables, name)
+		}
 	}
 	return 0, true
 }
