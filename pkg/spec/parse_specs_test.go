@@ -28,14 +28,23 @@ var (
 	dashPattern  = regexp.MustCompile(`\bdash\b`)
 )
 
-// Parses a spec file using the format from the Oil shell. Notable details:
+// Parses a spec file using the format from the Oil shell.
 //
-//   - An additional "argv-json" metadata is supported. Used for testing
-//     features related to argv without also testing the "set" builtin.
+// This supports a few extensions:
 //
-//   - Dash-specific non-BUG metadata are treated as acceptable alternative
-//     behavior. For example, if a test case specifies both "status: 0" and "N-I
-//     dash status: 2", both 0 and 2 are acceptable exit statuses.
+//   - argv-json: Useful for testing features related to argv without also
+//     testing the "set" builtin.
+//
+//   - status-interval: Looks like "[1, 10]". Asserts that the status is in that
+//     (inclusive) interval.
+//
+//   - stderr-regexp: Asserts that the stderr matches the given regexp.
+//
+// Shell-specific metadata are handled as follows:
+//
+//   - Dash-specific non-BUG metadata are treated as acceptable alternatives.
+//     For example, if a test case specifies both "status: 0" and "N-I dash
+//     status: 2", both 0 and 2 are acceptable exit statuses.
 //
 //   - All other shell-specific metadata are ignored. This includes "BUG dash"
 //     metadata and metadata for all other shells.
@@ -75,8 +84,9 @@ func parseSpecFile(filename, content string) []spec {
 		name := lines[i][len(namePrefix):]
 		var codeBuilder strings.Builder
 		var argv []string
-		var status []int
+		var status []interval
 		var stdout, stderr []string
+		var stderrRegexp []*regexp.Regexp
 		skipSpec := false
 		// Parse code lines
 		for i++; i < len(lines) && !isName(lines[i]) && !isMetadata(lines[i]); i++ {
@@ -134,6 +144,14 @@ func parseSpecFile(filename, content string) []spec {
 				if err != nil {
 					warn("can't parse status as number")
 				} else {
+					status = append(status, interval{i, i})
+				}
+			case "status-interval":
+				var i interval
+				err := json.Unmarshal([]byte(value), &i)
+				if err != nil {
+					warn("can't parse status-interval")
+				} else {
 					status = append(status, i)
 				}
 			case "stdout":
@@ -167,6 +185,13 @@ func parseSpecFile(filename, content string) []spec {
 				} else {
 					stderr = append(stderr, s)
 				}
+			case "stderr-regexp":
+				pattern, err := regexp.Compile("^" + value + "$")
+				if err != nil {
+					warn("can't parse stderr-regexp: " + err.Error())
+				} else {
+					stderrRegexp = append(stderrRegexp, pattern)
+				}
 			case "STDOUT":
 				if value != "" {
 					warn("trailing content")
@@ -185,10 +210,10 @@ func parseSpecFile(filename, content string) []spec {
 			continue
 		}
 		if len(status) == 0 {
-			status = []int{0}
+			status = []interval{{0, 0}}
 		}
 		specs = append(specs, spec{
-			filename, name, codeBuilder.String(), argv, status, stdout, stderr})
+			filename, name, codeBuilder.String(), argv, status, stdout, stderr, stderrRegexp})
 	}
 	return specs
 }

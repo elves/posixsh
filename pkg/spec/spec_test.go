@@ -2,6 +2,7 @@ package spec_test
 
 import (
 	"embed"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -23,9 +24,10 @@ type spec struct {
 
 	// No elements = don't check.
 	// Multiple elements = any one is OK.
-	wantStatus []int
-	wantStdout []string
-	wantStderr []string
+	wantStatus       []interval
+	wantStdout       []string
+	wantStderr       []string
+	wantStderrRegexp []*regexp.Regexp
 }
 
 //go:embed oil posix posix-ext
@@ -48,11 +50,32 @@ func TestSpecs(t *testing.T) {
 			ev := eval.NewEvaler(argv, files)
 			status := ev.Eval(spec.code)
 			stdout, stderr := read()
-			if len(spec.wantStatus) != 0 && !in(status, spec.wantStatus) {
-				t.Errorf("got status %v, want any of %v", status, spec.wantStatus)
+
+			if len(spec.wantStatus) > 0 {
+				if !matchAny(status, spec.wantStatus, interval.contains) {
+					t.Errorf("got status %v, want any of %v", status, spec.wantStatus)
+				}
 			}
-			testString(t, "stdout", stdout, spec.wantStdout)
-			testString(t, "stderr", stderr, spec.wantStderr)
+			if len(spec.wantStdout) > 0 {
+				if !in(stdout, spec.wantStdout) {
+					t.Errorf("got stdout %q", stdout)
+					for i, want := range spec.wantStdout {
+						t.Errorf("-want%v +got:\n%v", i, cmp.Diff(want, stdout))
+					}
+				}
+			}
+			if len(spec.wantStderr)+len(spec.wantStderrRegexp) > 0 {
+				if !in(stderr, spec.wantStderr) && !matchAny(stderr, spec.wantStderrRegexp, (*regexp.Regexp).MatchString) {
+					t.Errorf("got stderr %q", stderr)
+					for i, want := range spec.wantStderr {
+						t.Errorf("-want%v +got:\n%v", i, cmp.Diff(want, stderr))
+					}
+					for _, want := range spec.wantStderrRegexp {
+						t.Errorf("or matching regexp %q", want.String())
+					}
+				}
+			}
+
 			if t.Failed() {
 				t.Logf("code is:\n%v", spec.code)
 				if len(spec.wantStderr) == 0 && stderr != "" {
@@ -117,21 +140,20 @@ func outputPipe() (*os.File, func() string) {
 	}
 }
 
-func testString(t *testing.T, name, got string, want []string) {
-	t.Helper()
-	if len(want) == 0 || in(got, want) {
-		return
-	}
-	for i, want := range want {
-		t.Errorf("%v (-want%v +got):\n%v", name, i, cmp.Diff(want, got))
-	}
+func in[T comparable](x T, ys []T) bool {
+	return matchAny(x, ys, func(x, y T) bool { return x == y })
 }
 
-func in[T comparable](x T, ys []T) bool {
-	for _, y := range ys {
-		if x == y {
+func matchAny[V, M any](value V, matchers []M, match func(M, V) bool) bool {
+	for _, matcher := range matchers {
+		if match(matcher, value) {
 			return true
 		}
 	}
 	return false
 }
+
+type interval [2]int
+
+func (i interval) String() string      { return fmt.Sprintf("%v..%v", i[0], i[1]) }
+func (i interval) contains(j int) bool { return i[0] <= j && j <= i[1] }
