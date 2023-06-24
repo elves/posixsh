@@ -1,10 +1,10 @@
 #### unset variables
 x=foo
 y=bar
-echo ${x-lorem} echo ${y-ipsum}
+echo ${x-lorem} ${y-ipsum}
 unset x y
-echo ${x-lorem} echo ${y-ipsum}
-## STDTOUT:
+echo ${x-lorem} ${y-ipsum}
+## STDOUT:
 foo bar
 lorem ipsum
 ## END
