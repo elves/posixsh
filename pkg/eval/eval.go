@@ -56,7 +56,7 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, nil}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, nil}
 }
 
 type frame struct {
@@ -68,8 +68,11 @@ type frame struct {
 	// "other utility (not a special builtin-in error)" to print a shell
 	// diagnostic message to the stderr, ignoring all active redirections. We
 	// save the initial stderr (files[2]) in this field for that purpose.
-	diagFile     *os.File
-	lastCmdSubst int
+	diagFile *os.File
+	// Used for $?.
+	lastPipelineStatus int
+	// Used as the status of simple commands with only assignments.
+	lastCmdSubstStatus int
 	// The following two fields are used to implement break/continue inside
 	// for/while/until loops:
 	//
@@ -102,6 +105,10 @@ func (fm *frame) cloneForSubshell() *frame {
 		cloneMap(fm.variables), cloneMap(fm.functions),
 		cloneSlice(fm.files),
 		fm.diagFile,
+		// POSIX doesn't explicitly specify whether subshells inherit $?, but
+		// all of dash, bash, ksh and zsh let subshells inherit $?, so we follow
+		// their behavior.
+		fm.lastPipelineStatus,
 		0,
 		0,
 		nil,
@@ -176,6 +183,7 @@ func (fm *frame) andOr(ao *parse.AndOr) (int, bool) {
 			continue
 		}
 		status, ok := fm.pipeline(pp)
+		fm.lastPipelineStatus = status
 		if !ok {
 			return status, false
 		}
@@ -290,7 +298,7 @@ func (fm *frame) command(c *parse.Command) (int, bool) {
 
 func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	// See comment on the code path using this field.
-	fm.lastCmdSubst = 0
+	fm.lastCmdSubstStatus = 0
 
 	// The order of arguments > redirections > assignments is specified in
 	// 2.9.1 Simple Commands. POSIX allows for redirections and assignments to
@@ -328,7 +336,7 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		// substitution, the command shall complete with the exit status of the
 		// last command substitution performed. Otherwise, the command shall
 		// complete with a zero exit status.
-		return fm.lastCmdSubst, true
+		return fm.lastCmdSubstStatus, true
 	}
 
 	// The order of special builtin > function > non-special builtin > external
@@ -724,7 +732,7 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		// TODO: Save exit status for use in commands that only have command
 		// substitutions
 		go func() {
-			fm.lastCmdSubst, _ = newFm.chunk(pr.Body)
+			fm.lastCmdSubstStatus, _ = newFm.chunk(pr.Body)
 			w.Close()
 		}()
 		output, err := io.ReadAll(r)
@@ -953,8 +961,7 @@ func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	case "#":
 		return strconv.Itoa(len(fm.arguments) - 1), true, true
 	case "?":
-		// TODO: Actually return $?
-		return "0", true, true
+		return strconv.Itoa(fm.lastPipelineStatus), true, true
 	case "-":
 		// TODO
 		return "", true, true

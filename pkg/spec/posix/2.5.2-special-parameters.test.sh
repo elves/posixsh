@@ -66,6 +66,18 @@ echo $#
 2
 ## END
 
+#### Special parameter $?
+false
+echo $?
+true
+echo $?
+## STDOUT:
+1
+0
+## END
+
+# TODO: Test $-
+
 #### Special parameter $0
 echo $0
 ## argv-json: ["/bin/sh"]
@@ -73,4 +85,4 @@ echo $0
 /bin/sh
 ## END
 
-# TODO: Test other special parameters.
+# TODO: Test $!
