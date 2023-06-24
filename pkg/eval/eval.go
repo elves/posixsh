@@ -21,11 +21,6 @@ type Evaler struct {
 	variables map[string]string
 	functions map[string]*parse.Command
 	files     []*os.File
-	// POSIX requires all cases except "special built-in utility error" and
-	// "other utility (not a special builtin-in error)" to print a shell
-	// diagnostic message to the stderr, ignoring all active redirections. We
-	// save the initial stderr (files[2]) in this field for that purpose.
-	diagFile *os.File
 }
 
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
@@ -42,14 +37,14 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 		make(map[string]string),
 		make(map[string]*parse.Command),
 		files,
-		files[2],
 	}
 }
 
 func (ev *Evaler) Eval(code string) int {
 	n, err := parse.Parse(code)
 	if err != nil {
-		fmt.Fprintln(ev.diagFile, "syntax error:", err)
+		// TODO: Add range information.
+		fmt.Fprintln(ev.files[2], "syntax error:", err)
 		return StatusSyntaxError
 	}
 	return ev.EvalChunk(n)
@@ -61,14 +56,18 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.diagFile, 0, 0, nil}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, nil}
 }
 
 type frame struct {
-	arguments    []string
-	variables    map[string]string
-	functions    map[string]*parse.Command
-	files        []*os.File
+	arguments []string
+	variables map[string]string
+	functions map[string]*parse.Command
+	files     []*os.File
+	// POSIX requires all cases except "special built-in utility error" and
+	// "other utility (not a special builtin-in error)" to print a shell
+	// diagnostic message to the stderr, ignoring all active redirections. We
+	// save the initial stderr (files[2]) in this field for that purpose.
 	diagFile     *os.File
 	lastCmdSubst int
 	// The following two fields are used to implement break/continue inside

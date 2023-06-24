@@ -1,6 +1,12 @@
 package eval
 
-import "strconv"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/elves/posixsh/pkg/parse"
+)
 
 // Some builtins are designated "special" by POSIX; the return value includes a
 // bool because they can return a fatal error that terminates evaluation.
@@ -12,7 +18,6 @@ var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 	":":        colon,
 	"continue": continueCmd,
 	".":        dot,
-	"eval":     eval,
 	"export":   export,
 	"readonly": readonly,
 	"return":   returnCmd,
@@ -21,6 +26,12 @@ var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 	"times":    times,
 	"trap":     trap,
 	"unset":    unset,
+}
+
+func init() {
+	// Some special builtins refer to methods that depend on specialBuiltins, so
+	// initialize them here to avoid dependency cycle.
+	specialBuiltins["eval"] = eval
 }
 
 func breakCmd(fm *frame, args []string) (int, bool) {
@@ -82,9 +93,20 @@ func dot(*frame, []string) (int, bool) {
 	return 0, true
 }
 
-func eval(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
+func eval(fm *frame, args []string) (int, bool) {
+	code := strings.Join(args, " ")
+	if strings.Trim(code, " \t\n") == "" {
+		return 0, true
+	}
+	fmt.Printf("args is %q\n", args)
+	fmt.Printf("code is %q\n", code)
+	n, err := parse.Parse(code)
+	if err != nil {
+		// TODO: Add range information.
+		fmt.Fprintln(fm.diagFile, "syntax error:", err)
+		return StatusSyntaxError, false
+	}
+	return fm.chunk(n)
 }
 
 func export(*frame, []string) (int, bool) {
