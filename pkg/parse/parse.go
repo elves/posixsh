@@ -688,12 +688,13 @@ func (pr *Primary) parse(p *parser, opt nodeOpt) {
 		}
 	case p.consumePrefix(`"`):
 		pr.Type = DoubleQuotedPrimary
-		for !p.eof() && !p.consumePrefix(`"`) {
+		for !p.eof() && !p.hasPrefix(`"`) {
 			addTo(&pr.Segments, parse(p, &Segment{}, (*int)(nil)))
 		}
 		if p.eof() {
 			p.errorf("unterminated double-quoted string")
 		}
+		p.consumePrefix(`"`)
 	case p.consumePrefix("$(("):
 		pr.Type = ArithmeticPrimary
 		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_04:
