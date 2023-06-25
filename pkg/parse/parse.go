@@ -391,19 +391,16 @@ func (as *Assign) parse(p *parser, opt nodeOpt) {
 
 type Heredoc struct {
 	node
-	delim            string
-	quoted           bool
-	stripLeadingTabs bool
-	Value            string
+	Value string
 }
 
 var leadingTabs = regexp.MustCompile(`(?m)^\t+`)
 
 // This function is called in (*Whitespaces).parse immediately after a \n,
 // for each pending Heredoc.
-func (hd *Heredoc) parse(p *parser, _ struct{}) {
+func (hd *Heredoc) parse(p *parser, ph *pendingHeredoc) {
 	begin := p.pos
-	if hd.stripLeadingTabs {
+	if ph.stripLeadingTabs {
 		defer func() {
 			hd.Value = leadingTabs.ReplaceAllLiteralString(hd.Value, "")
 		}()
@@ -416,17 +413,17 @@ func (hd *Heredoc) parse(p *parser, _ struct{}) {
 			iNext = j
 		}
 		line := p.text[i:j]
-		if hd.stripLeadingTabs {
+		if ph.stripLeadingTabs {
 			line = strings.TrimLeft(line, "\t")
 		}
-		if line == hd.delim {
+		if line == ph.delim {
 			hd.Value = p.text[begin:i]
 			p.pos = iNext
 			return
 		}
 		i = iNext
 	}
-	p.errorf("undelimited heredoc %q", hd.delim)
+	p.errorf("undelimited heredoc %q", ph.delim)
 	hd.Value = p.text[begin:]
 	p.pos = len(p.text)
 }
@@ -499,8 +496,9 @@ func (rd *Redir) parse(p *parser, opt nodeOpt) {
 	rd.Right = parse(p, &Compound{}, opt)
 	if rd.Mode == RedirHeredoc {
 		delim, quoted := parseHeredocDelim(p, rd.Right)
-		rd.Heredoc = &Heredoc{delim: delim, quoted: quoted, stripLeadingTabs: stripLeadingTabs}
-		p.pendingHeredocs = append(p.pendingHeredocs, rd.Heredoc)
+		rd.Heredoc = &Heredoc{}
+		pending := &pendingHeredoc{delim, quoted, stripLeadingTabs, rd.Heredoc}
+		p.pendingHeredocs = append(p.pendingHeredocs, pending)
 	}
 }
 
@@ -599,6 +597,10 @@ type Primary struct {
 	Variable *Variable // Valid for VariablePrimary.
 	Segments []Segment // Valid for DoubleQuotesPrimary / ArithmeticPrimary.
 	Body     *Chunk    // Valid for OutputCapturePrimary.
+}
+
+type Segment interface {
+	Segment() (*Primary, string)
 }
 
 type PrimaryType int
@@ -807,10 +809,6 @@ func (seg *DQSegment) parse(p *parser, _ struct{}) {
 		}
 	})
 	seg.Text = b.String()
-}
-
-type Segment interface {
-	Segment() (*Primary, string)
 }
 
 // ArithSegment represents a segment in an arithmetic expression, either an

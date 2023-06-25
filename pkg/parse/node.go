@@ -58,7 +58,7 @@ func (w *Whitespaces) parse(p *parser, opt whitespacesOpt) {
 		return
 	}
 	for _, pending := range p.pendingHeredocs {
-		parseNoOpt(p, pending)
+		parse(p, pending.dest, pending)
 	}
 	p.pendingHeredocs = nil
 	consumeWhitespacesAndComment(p, whitespaceSet, semicolon)

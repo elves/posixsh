@@ -25,7 +25,14 @@ type parser struct {
 	err   Error
 	// Heredocs are collected into this list when parsing the leader (e.g.
 	// <<EOF), and resolved when parsing newlines.
-	pendingHeredocs []*Heredoc
+	pendingHeredocs []*pendingHeredoc
+}
+
+type pendingHeredoc struct {
+	delim            string
+	quoted           bool
+	stripLeadingTabs bool
+	dest             *Heredoc
 }
 
 func newParser(orig string) *parser {
