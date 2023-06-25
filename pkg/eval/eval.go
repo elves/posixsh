@@ -275,24 +275,40 @@ func (fm *frame) command(c *parse.Command) (int, bool) {
 		return fm.runSimple(c, data)
 	case parse.FnDef:
 		return fm.runFnDef(c, data)
-	// TODO: Handle redir for the rest of the types
-	case parse.Group:
-		return fm.chunk(data.Body)
-	case parse.SubshellGroup:
-		return fm.cloneForSubshell().chunk(data.Body)
-	case parse.For:
-		return fm.runFor(c, data)
-	case parse.Case:
-		return fm.runCase(c, data)
-	case parse.If:
-		return fm.runIf(c, data)
-	case parse.While:
-		return fm.runWhile(c, data)
-	case parse.Until:
-		return fm.runUntil(c, data)
 	default:
-		fm.diag(c, "bug: unknown command type %T", c.Data)
-		return StatusShellBug, false
+		// Redirections are performed first for the rest of the types.
+		//
+		// This duplicates code in (*frame).runSimple.
+		//
+		// TODO: Redirections should not affect the frame itself.
+		for _, rd := range c.Redirs {
+			status, ok, cleanup := fm.redir(rd)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if status != 0 {
+				return status, ok
+			}
+		}
+		switch data := c.Data.(type) {
+		case parse.Group:
+			return fm.chunk(data.Body)
+		case parse.SubshellGroup:
+			return fm.cloneForSubshell().chunk(data.Body)
+		case parse.For:
+			return fm.runFor(c, data)
+		case parse.Case:
+			return fm.runCase(c, data)
+		case parse.If:
+			return fm.runIf(c, data)
+		case parse.While:
+			return fm.runWhile(c, data)
+		case parse.Until:
+			return fm.runUntil(c, data)
+		default:
+			fm.diag(c, "bug: unknown command type %T", c.Data)
+			return StatusShellBug, false
+		}
 	}
 }
 
@@ -309,6 +325,8 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		return StatusExpansionError, false
 	}
 
+	// TODO: Redirections should not affect the frame itself unless the command
+	// is a special builtin.
 	for _, rd := range c.Redirs {
 		status, ok, cleanup := fm.redir(rd)
 		if cleanup != nil {
@@ -524,8 +542,9 @@ func (fm *frame) runWhileUntil(c *parse.Command, condition, body []*parse.AndOr,
 	return lastStatus, true
 }
 
-// Returns a status code, whether to continue, and a clean up function (which
-// may be nil).
+// Returns a status code, whether there is an error that should always be
+// considered fatal (an expansion error), and a clean up function (which may be
+// nil).
 func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 	var flag, defaultDst int
 	switch rd.Mode {

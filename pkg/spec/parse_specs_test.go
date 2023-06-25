@@ -186,7 +186,7 @@ func parseSpecFile(filename, content string) []spec {
 					stderr = append(stderr, s)
 				}
 			case "stderr-regexp":
-				pattern, err := regexp.Compile("^" + value + "$")
+				pattern, err := regexp.Compile("^(?s)" + value + "$")
 				if err != nil {
 					warn("can't parse stderr-regexp: " + err.Error())
 				} else {

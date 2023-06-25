@@ -151,9 +151,11 @@ func (fm *Command) parse(p *parser, opt nodeOpt) {
 	case p.maybeMeta("{"):
 		fm.Data = Group{parse(p, &Chunk{}, normal)}
 		p.meta("}")
+		p.inlineWhitespace()
 	case p.maybeMeta("("):
 		fm.Data = SubshellGroup{parse(p, &Chunk{}, normal)}
 		p.meta(")")
+		p.inlineWhitespace()
 	case p.maybeWord("for", opt):
 		p.inlineWhitespace()
 		fm.Data = parseFor(p, opt)
