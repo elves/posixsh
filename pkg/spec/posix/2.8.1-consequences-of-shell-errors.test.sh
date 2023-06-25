@@ -43,3 +43,9 @@ echo should not get here
 ## status-interval: [1, 127]
 ## stdout:
 ## stderr-regexp: .+
+
+#### Fatal errors in subshell only exit the subshell
+( echo $(( 1 /*/ 2 )) )
+echo should get here
+## stdout: should get here
+## stderr-regexp: .+

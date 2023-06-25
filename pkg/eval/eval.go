@@ -294,7 +294,9 @@ func (fm *frame) command(c *parse.Command) (int, bool) {
 		case parse.Group:
 			return fm.chunk(data.Body)
 		case parse.SubshellGroup:
-			return fm.cloneForSubshell().chunk(data.Body)
+			// Fatal errors from subshells are turned into non-fatal errors.
+			status, _ := fm.cloneForSubshell().chunk(data.Body)
+			return status, true
 		case parse.For:
 			return fm.runFor(c, data)
 		case parse.Case:
