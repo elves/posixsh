@@ -699,9 +699,9 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		// to be considered part of a bareword.
 		return literal{pr.Value}, true
 	case parse.DoubleQuotedPrimary:
-		return fm.dqSegments(pr.Segments)
+		return fm.segments(pr.Segments)
 	case parse.ArithmeticPrimary:
-		exp, ok := fm.dqSegments(pr.Segments)
+		exp, ok := fm.segments(pr.Segments)
 		if !ok {
 			return nil, false
 		}
@@ -751,20 +751,18 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 	}
 }
 
-func (fm *frame) dqSegments(segs []*parse.Segment) (expander, bool) {
+func (fm *frame) segments(segs []parse.Segment) (expander, bool) {
 	var elems []expander
 	for _, seg := range segs {
-		switch seg.Type {
-		case parse.StringSegment:
-			elems = append(elems, literal{seg.Value})
-		case parse.ExpansionSegment:
-			exp, ok := fm.primary(seg.Expansion)
+		expansion, text := seg.Segment()
+		if expansion != nil {
+			exp, ok := fm.primary(expansion)
 			if !ok {
 				return nil, false
 			}
 			elems = append(elems, exp)
-		default:
-			fmt.Fprintln(fm.files[2], "unknown DQ segment type", seg.Type)
+		} else {
+			elems = append(elems, literal{text})
 		}
 	}
 	return doubleQuoted{elems}, true
