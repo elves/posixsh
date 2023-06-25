@@ -391,7 +391,11 @@ func (as *Assign) parse(p *parser, opt nodeOpt) {
 
 type Heredoc struct {
 	node
-	Value string
+	// If non-nil, the heredoc is unquoted and the parsed segments is stored
+	// inside this slice. Otherwise the heredoc is quoted and the literal text
+	// (after possibly stripping leading tabs) is in the Text field.
+	Segments []Segment
+	Text     string
 }
 
 var leadingTabs = regexp.MustCompile(`(?m)^\t+`)
@@ -399,33 +403,74 @@ var leadingTabs = regexp.MustCompile(`(?m)^\t+`)
 // This function is called in (*Whitespaces).parse immediately after a \n,
 // for each pending Heredoc.
 func (hd *Heredoc) parse(p *parser, ph *pendingHeredoc) {
-	begin := p.pos
+	var tabPrefix string
 	if ph.stripLeadingTabs {
-		defer func() {
-			hd.Value = leadingTabs.ReplaceAllLiteralString(hd.Value, "")
-		}()
+		tabPrefix = `\t*`
 	}
-	for i := p.pos; i < len(p.text); {
-		j := i + strings.IndexByte(p.text[i:], '\n')
-		iNext := j + 1
-		if j == -1 {
-			j = len(p.text)
-			iNext = j
+	endRegexp := regexp.MustCompile(`(?m)^` + tabPrefix + regexp.QuoteMeta(ph.delim) + `$\n?`)
+	endLoc := endRegexp.FindStringIndex(p.rest())
+	if endLoc == nil {
+		p.errorf("undelimited heredoc %q", ph.delim)
+	}
+
+	if ph.quoted {
+		if endLoc == nil {
+			hd.Text = p.text[p.pos:]
+			p.pos = len(p.text)
+		} else {
+			hd.Text = p.text[p.pos : p.pos+endLoc[0]]
+			p.pos += endLoc[1]
 		}
-		line := p.text[i:j]
 		if ph.stripLeadingTabs {
-			line = strings.TrimLeft(line, "\t")
+			hd.Text = leadingTabs.ReplaceAllLiteralString(hd.Text, "")
 		}
-		if line == ph.delim {
-			hd.Value = p.text[begin:i]
-			p.pos = iNext
-			return
+	} else {
+		// TODO: Support stripLeadingTabs
+		begin := p.pos
+		savedText := p.text
+		if endLoc != nil {
+			// Hack: clip the text when parsing segments so that parsing of
+			// expansion segments doesn't consume the heredoc delimiter.
+			p.text = p.text[:p.pos+endLoc[0]]
 		}
-		i = iNext
+		for !p.eof() {
+			addTo(&hd.Segments, Segment(parse(p, &HeredocSegment{}, ph.stripLeadingTabs)))
+		}
+		p.text = savedText
+		if endLoc == nil {
+			p.pos = len(p.text)
+		} else {
+			p.pos = begin + endLoc[1]
+		}
 	}
-	p.errorf("undelimited heredoc %q", ph.delim)
-	hd.Value = p.text[begin:]
-	p.pos = len(p.text)
+}
+
+type HeredocSegment struct {
+	node
+	Expansion *Primary
+	Text      string
+}
+
+func (seg *HeredocSegment) Segment() (*Primary, string) { return seg.Expansion, seg.Text }
+
+var newlineAndTabs = regexp.MustCompile(`\n\t+`)
+
+func (seg *HeredocSegment) parse(p *parser, stripLeadingTabs bool) {
+	if p.hasPrefixIn("$", "`") != "" {
+		// TODO: Strip leading tabs when parsing expansions too. Leading tabs
+		// are meaningful when inside string literals or just after a line
+		// continuation.
+		seg.Expansion = parse(p, &Primary{}, normal)
+	} else {
+		sol := p.pos == 0 || p.text[p.pos-1] == '\n'
+		seg.Text = parseStringSegment(p, "$`")
+		if stripLeadingTabs {
+			seg.Text = newlineAndTabs.ReplaceAllLiteralString(seg.Text, "\n")
+			if sol {
+				seg.Text = strings.TrimLeft(seg.Text, "\t")
+			}
+		}
+	}
 }
 
 type Redir struct {
@@ -768,31 +813,29 @@ type DQSegment struct {
 
 func (seg *DQSegment) Segment() (*Primary, string) { return seg.Expansion, seg.Text }
 
-var (
-	dqStringSegmentStopper        = "$`\""
-	dqLiteralStringSegmentStopper = dqStringSegmentStopper + "\\"
-)
-
 // Parses a segment inside "".
 func (seg *DQSegment) parse(p *parser, _ struct{}) {
 	if p.hasPrefixIn("$", "`") != "" {
 		seg.Expansion = parse(p, &Primary{}, normal)
-		return
+	} else {
+		seg.Text = parseStringSegment(p, "$`\"")
 	}
+}
+
+func parseStringSegment(p *parser, meta string) string {
 	// Optimization: Consume a prefix that does not contain backslashes.
-	// This avoids building a bytes.Buffer when this segment is free of
+	// This avoids building a strings.Builder when this segment is free of
 	// backslashes.
-	raw := p.consumeWhileNotIn(dqLiteralStringSegmentStopper)
-	if !p.hasPrefix("\\") {
-		seg.Text = raw
-		return
+	raw := p.consumeWhileNotIn(meta + `\`)
+	if !p.hasPrefix(`\`) {
+		return raw
 	}
 	var b strings.Builder
 	b.WriteString(raw)
 	lastBackslash := false
 	p.consumeWhile(func(r rune) bool {
 		if lastBackslash {
-			if !runeIn(r, dqLiteralStringSegmentStopper) {
+			if !runeIn(r, meta+`\`) {
 				b.WriteRune('\\')
 			}
 			b.WriteRune(r)
@@ -801,14 +844,14 @@ func (seg *DQSegment) parse(p *parser, _ struct{}) {
 		} else if r == '\\' {
 			lastBackslash = true
 			return true
-		} else if runeIn(r, dqStringSegmentStopper) {
+		} else if runeIn(r, meta) {
 			return false
 		} else {
 			b.WriteRune(r)
 			return true
 		}
 	})
-	seg.Text = b.String()
+	return b.String()
 }
 
 // ArithSegment represents a segment in an arithmetic expression, either an

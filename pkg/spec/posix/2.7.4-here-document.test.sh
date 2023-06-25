@@ -58,15 +58,14 @@ more1
 more2
 ## END
 
-# TODO:
-# #### Expansions when starting word is unquoted
-# x=variable
-# cat <<EOF
-# $x $(echo foo) `echo bar` $(( 7*6 ))
-# EOF
-# ## STDOUT:
-# variable foo bar 42
-# ## END
+#### Expansions when starting word is unquoted
+x=variable
+cat <<EOF
+$x $(echo foo) `echo bar` $(( 7*6 ))
+EOF
+## STDOUT:
+variable foo bar 42
+## END
 
 #### No expansion when starting word is quoted
 x=variable
@@ -81,21 +80,35 @@ $x $(echo foo) `echo bar` $(( 7*6 ))
 $x $(echo foo) `echo bar` $(( 7*6 ))
 ## END
 
-#### No expansion when starting word is partially quoted
-x=variable
-cat <<E'OF'
-$x $(echo foo) `echo bar` $(( 7*6 ))
-EOF
-cat <<E"OF"
-$x $(echo foo) `echo bar` $(( 7*6 ))
-EOF
+# Note: The test case for when the starting word is partially quoted is at the
+# end.
+
+#### Stripping leading tabs with <<- with unquoted start word
+cat <<-EOF
+	$(echo line1)
+		`echo line2`
+			$(( 7 * 6 ))
+	EOF
 ## STDOUT:
-$x $(echo foo) `echo bar` $(( 7*6 ))
-$x $(echo foo) `echo bar` $(( 7*6 ))
+line1
+line2
+42
 ## END
 
-#### Stripping leading tabs with <<-
-cat <<-EOF
+# TODO:
+# 
+# #### Stripping of leading tabs also affect expansions
+# cat <<-EOF
+# 	$(echo '
+# 	foo')
+# 	EOF
+# ## STDOUT:
+# 
+# foo
+# ## END
+
+#### Stripping leading tabs with <<- with quoted start word
+cat <<-'EOF'
 	line1
 		line2
 	EOF
@@ -112,4 +125,20 @@ cat << -EOF
 ## STDOUT:
 	line1
 		line2
+## END
+
+# Note: Syntax highlighting of editors may get confused when the starting word
+# is only partially quoted, so put this test case at the end.
+
+#### No expansion when starting word is partially quoted
+x=variable
+cat <<E'OF'
+$x $(echo foo) `echo bar` $(( 7*6 ))
+EOF
+cat <<E"OF"
+$x $(echo foo) `echo bar` $(( 7*6 ))
+EOF
+## STDOUT:
+$x $(echo foo) `echo bar` $(( 7*6 ))
+$x $(echo foo) `echo bar` $(( 7*6 ))
 ## END

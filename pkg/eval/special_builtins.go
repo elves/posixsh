@@ -98,8 +98,6 @@ func eval(fm *frame, args []string) (int, bool) {
 	if strings.Trim(code, " \t\n") == "" {
 		return 0, true
 	}
-	fmt.Printf("args is %q\n", args)
-	fmt.Printf("code is %q\n", code)
 	n, err := parse.Parse(code)
 	if err != nil {
 		// TODO: Add range information.

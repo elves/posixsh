@@ -524,8 +524,8 @@ func (fm *frame) runWhileUntil(c *parse.Command, condition, body []*parse.AndOr,
 	return lastStatus, true
 }
 
-// Returns a status code, whether to continue, and a clean up function (the
-// latter may be nil).
+// Returns a status code, whether to continue, and a clean up function (which
+// may be nil).
 func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 	var flag, defaultDst int
 	switch rd.Mode {
@@ -556,13 +556,20 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 			fm.diag(rd, "unable to create pipe for heredoc: %v", err)
 			return StatusPipeError, true, nil
 		}
-		content := rd.Heredoc.Value
+		text := rd.Heredoc.Text
+		if rd.Heredoc.Segments != nil {
+			exp, ok := fm.segments(rd.Heredoc.Segments)
+			if !ok {
+				return StatusExpansionError, false, nil
+			}
+			text = exp.expandOneString()
+		}
 		go func() {
-			n, err := w.WriteString(content)
+			n, err := w.WriteString(text)
 			if err != nil {
 				fm.diag(rd, "error writing to heredoc pipe: %v", err)
-			} else if n < len(content) {
-				fm.diag(rd, "short write on heredoc pipe: %v < %v", n, len(content))
+			} else if n < len(text) {
+				fm.diag(rd, "short write on heredoc pipe: %v < %v", n, len(text))
 			}
 			w.Close()
 		}()
