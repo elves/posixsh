@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"regexp"
 	"strconv"
@@ -34,10 +33,24 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 	}
 	return &Evaler{
 		args,
-		make(map[string]string),
+		initEnvMap(os.Environ()),
 		make(map[string]*parse.Command),
 		files,
 	}
+}
+
+func initEnvMap(entries []string) map[string]string {
+	m := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		// Note: Treat "foo" like "foo=" if such entries ever occur.
+		name, value, _ := strings.Cut(entry, "=")
+		m[name] = value
+	}
+	wd, err := os.Getwd()
+	if err == nil {
+		m["PWD"] = wd
+	}
+	return m
 }
 
 func (ev *Evaler) Eval(code string) int {
@@ -381,14 +394,20 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 
 	// External commands?
-	// TODO: Don't use exec.LookPath because it doesn't use
-	// fm.variables["PATH"].
-	path, err := exec.LookPath(words[0])
+
+	// TODO: Don't use os.Getwd; virtualize working directory per frame.
+	wd, err := os.Getwd()
 	if err != nil {
-		// TODO: Return StatusCommandNotExecutable if file exists but is not
-		// executable.
-		fm.diag(c, "command not found: %v", err)
-		return StatusCommandNotFound, true
+		wd = "/"
+	}
+	path, status := lookPath(words[0], wd, fm.variables["PATH"])
+	if status != 0 {
+		if status == StatusCommandNotFound {
+			fm.diag(c, "command not found: %v", words[0])
+		} else if status == StatusCommandNotExecutable {
+			fm.diag(c, "command not executable: %v", words[0])
+		}
+		return status, true
 	}
 	words[0] = path
 

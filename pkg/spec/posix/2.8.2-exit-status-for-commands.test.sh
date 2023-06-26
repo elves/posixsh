@@ -1,15 +1,13 @@
 #### Command not found error exits with 127
-PATH=
-bad-command
+PATH=$PWD
+foo
 ## status: 127
 
-# TODO: Enable when implemented
-#
-# #### Command not executable error exits with 126
-# PATH=$PWD
-# touch foo
-# foo
-# ## status: 126
+#### Command not executable error exits with 126
+touch foo
+PATH=$PWD
+foo
+## status: 126
 
 # TODO: Enable when there's support for asserting status is between 1 and 125
 #

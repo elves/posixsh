@@ -13,8 +13,10 @@ echo should get here
 ## stderr-regexp: .+
 
 #### Command not found is not fatal
+oldpath=$PATH
 PATH=
 nonexistent-command
+PATH=$oldpath
 echo should get here
 ## stdout: should get here
 ## stderr-regexp: .+
