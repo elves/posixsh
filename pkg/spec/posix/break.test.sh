@@ -60,13 +60,13 @@ foo
 #### break raises fatal error when given invalid argument
 break -1
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 
 #### break raises fatal error when given superfluous more arguments
 break 1 10
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 
 #### break exits outermost loop when n > number of enclosing loops

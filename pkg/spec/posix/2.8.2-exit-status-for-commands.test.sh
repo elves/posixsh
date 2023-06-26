@@ -11,11 +11,11 @@ foo
 
 #### Word expansion error exits with a status between 1 and 125
 echo $(( 1//2 ))
-## status-interval: [1, 125]
+## status: [1, 125]
 
 #### Redirection error exits with a status between 1 and 125
 echo < non-existent
-## status-interval: [1, 125]
+## status: [1, 125]
 
 # TODO: Test that the status is retrieved with WEXITSTATUS
 

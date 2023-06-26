@@ -35,8 +35,8 @@ var (
 //   - argv-json: Useful for testing features related to argv without also
 //     testing the "set" builtin.
 //
-//   - status-interval: Looks like "[1, 10]". Asserts that the status is in that
-//     (inclusive) interval.
+//   - status: Aside from a single number, also supports intervals like "[1,
+//     10]".
 //
 //   - stderr-regexp: Asserts that the stderr matches the given regexp.
 //
@@ -142,17 +142,15 @@ func parseSpecFile(filename, content string) []spec {
 			case "status":
 				i, err := strconv.Atoi(value)
 				if err != nil {
-					warn("can't parse status as number")
+					var i interval
+					err := json.Unmarshal([]byte(value), &i)
+					if err != nil {
+						warn("can't parse status as integer or interval")
+					} else {
+						status = append(status, i)
+					}
 				} else {
 					status = append(status, interval{i, i})
-				}
-			case "status-interval":
-				var i interval
-				err := json.Unmarshal([]byte(value), &i)
-				if err != nil {
-					warn("can't parse status-interval")
-				} else {
-					status = append(status, i)
 				}
 			case "stdout":
 				stdout = append(stdout, value+"\n")

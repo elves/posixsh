@@ -1,14 +1,14 @@
 #### Syntax error is fatal
 echo $
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 ## stderr-regexp: .+
 
 #### Error from special builtin is fatal
 break 1 2 3 # break is a special builtin
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 ## stderr-regexp: .+
 
@@ -18,7 +18,7 @@ echo should not get here
 #### Redirection error with special builtin is fatal
 break < bad-file
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 ## stderr-regexp: .+
 
@@ -33,14 +33,14 @@ echo should get here
 # readonly x=foo
 # x=bar
 # echo should not get here
-# ## status-interval: [1, 127]
+# ## status: [1, 127]
 # ## stdout:
 # ## stderr-regexp: .+
 
 #### Expansion error is fatal
 echo $(( 1 /*/ 2 ))
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 ## stderr-regexp: .+
 

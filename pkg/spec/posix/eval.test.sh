@@ -11,7 +11,7 @@ eval echo \' foo \' bar
 #### eval throws a fatal error on syntax error
 eval '$'
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 
 #### Status of eval is the status of the last command

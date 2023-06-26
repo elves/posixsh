@@ -69,13 +69,13 @@ bar
 #### continue raises fatal error when given invalid argument
 continue -1
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 
 #### continue raises fatal error when given superfluous more arguments
 continue 1 10
 echo should not get here
-## status-interval: [1, 127]
+## status: [1, 127]
 ## stdout:
 
 #### continue exits outermost loop when n > number of enclosing loops
