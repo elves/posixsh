@@ -42,23 +42,12 @@ func breakCmd(fm *frame, args []string) (int, bool) {
 // setting fm.loopAbort, which is examined in the implementation of
 // for/while/until.
 func abortLoop(fm *frame, args []string, next bool) (int, bool) {
-	var level int
-	switch len(args) {
-	case 0:
-		level = 1
-	case 1:
-		n, err := strconv.Atoi(args[0])
-		if err != nil {
-			fm.badCommandLine("argument must be number, got %q", args[0])
-			return StatusBadCommandLine, false
-		}
-		if n <= 0 {
-			fm.badCommandLine("argument must be positive, got %v", n)
-			return StatusBadCommandLine, false
-		}
-		level = n
-	default:
-		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
+	level, ok := parseOneInt(fm, args, 1)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if level <= 0 {
+		fm.badCommandLine("argument must be positive, got %v", level)
 		return StatusBadCommandLine, false
 	}
 	if fm.loopDepth == 0 {
@@ -78,6 +67,23 @@ func abortLoop(fm *frame, args []string, next bool) (int, bool) {
 	}
 	fm.loopAbort = &loopAbort{dest: dest, next: next}
 	return 0, false
+}
+
+func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
+	switch len(args) {
+	case 0:
+		return fallback, true
+	case 1:
+		n, err := strconv.Atoi(args[0])
+		if err != nil {
+			fm.badCommandLine("argument must be number, got %q", args[0])
+			return 0, false
+		}
+		return n, true
+	default:
+		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
+		return 0, false
+	}
 }
 
 func colon(*frame, []string) (int, bool) {
@@ -118,23 +124,12 @@ func readonly(*frame, []string) (int, bool) {
 }
 
 func returnCmd(fm *frame, args []string) (int, bool) {
-	var status int
-	switch len(args) {
-	case 0:
-		status = fm.lastPipelineStatus
-	case 1:
-		n, err := strconv.Atoi(args[0])
-		if err != nil {
-			fm.badCommandLine("argument must be number, got %q", args[0])
-			return StatusBadCommandLine, false
-		}
-		if n < 0 {
-			fm.badCommandLine("argument must be non-negative, got %v", n)
-			return StatusBadCommandLine, false
-		}
-		status = n
-	default:
-		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
+	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if status < 0 {
+		fm.badCommandLine("argument must be non-negative, got %v", status)
 		return StatusBadCommandLine, false
 	}
 	fm.fnAbort = true
