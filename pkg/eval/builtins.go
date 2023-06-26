@@ -20,6 +20,8 @@ var builtins = map[string]func(*frame, []string) int{
 	"pwd":     pwd,
 	"read":    read,
 	"true":    trueCmd,
+	"type":    typeCmd,
+	"ulimit":  ulimit,
 	"umask":   umask,
 	"unalias": unalias,
 	"wait":    wait,
@@ -107,6 +109,16 @@ func getLine(r io.Reader) string {
 }
 
 func trueCmd(*frame, []string) int { return 0 }
+
+func typeCmd(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
+
+func ulimit(fm *frame, args []string) int {
+	// TODO
+	return 0
+}
 
 func umask(fm *frame, args []string) int {
 	// TODO

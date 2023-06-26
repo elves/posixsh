@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -39,6 +40,9 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 	}
 }
 
+// TODO: Consider storing environment within a frame as a slice of name=value to
+// avoid the conversion overhead.
+
 func initEnvMap(entries []string) map[string]string {
 	m := make(map[string]string, len(entries))
 	for _, entry := range entries {
@@ -51,6 +55,14 @@ func initEnvMap(entries []string) map[string]string {
 		m["PWD"] = wd
 	}
 	return m
+}
+
+func serializeEnvMap(m map[string]string) []string {
+	entries := make([]string, 0, len(m))
+	for name, value := range m {
+		entries = append(entries, name+"="+value)
+	}
+	return entries
 }
 
 func (ev *Evaler) Eval(code string) int {
@@ -340,8 +352,14 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		return StatusExpansionError, false
 	}
 
-	// TODO: Redirections should not affect the frame itself unless the command
-	// is a special builtin.
+	if len(c.Redirs) > 0 && !(len(words) > 0 && words[0] == "exec") {
+		// Undo redirections unless we're running "exec".
+		savedFiles := cloneSlice(fm.files)
+		defer func() {
+			fm.files = savedFiles
+		}()
+	}
+
 	for _, rd := range c.Redirs {
 		status, ok, cleanup := fm.redir(rd)
 		if cleanup != nil {
@@ -353,13 +371,26 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		}
 	}
 
-	// TODO: Temp assignment
+	// Assignments are permanent if there is no command, or if the command is a
+	// special builtin.
+	permAssign := len(words) == 0 || specialBuiltins[words[0]] != nil
 	for _, assign := range c.Assigns {
 		exp, ok := fm.compound(assign.RHS)
 		if !ok {
 			return StatusExpansionError, false
 		}
-		fm.variables[assign.LHS] = exp.expandOneString()
+		name := assign.LHS
+		if !permAssign {
+			value, isSet := fm.variables[name]
+			if !isSet {
+				defer delete(fm.variables, name)
+			} else {
+				defer func() {
+					fm.variables[name] = value
+				}()
+			}
+		}
+		fm.variables[name] = exp.expandOneString()
 	}
 
 	if len(words) == 0 {
@@ -411,9 +442,12 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 	words[0] = path
 
-	proc, err := os.StartProcess(path, words, &os.ProcAttr{
-		Files: fm.files,
-	})
+	proc, err := fm.startProcess(words)
+	if errors.Is(err, syscall.ENOEXEC) {
+		// POSIX requires the shell to handle ENOEXEC by using a shell to run
+		// the file.
+		proc, err = fm.startProcess(append([]string{"/bin/sh"}, words...))
+	}
 	if err != nil {
 		fm.diag(c, "command not executable: %v", err)
 		return StatusCommandNotExecutable, true
@@ -433,6 +467,14 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		}
 		return StatusWaitOther, true
 	}
+}
+
+func (fm *frame) startProcess(words []string) (*os.Process, error) {
+	return os.StartProcess(words[0], words, &os.ProcAttr{
+		Files: fm.files,
+		// TODO: Only serialize exported variables.
+		Env: serializeEnvMap(fm.variables),
+	})
 }
 
 func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {
