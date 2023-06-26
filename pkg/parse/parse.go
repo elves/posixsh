@@ -85,18 +85,20 @@ func (ao *AndOr) parse(p *parser, opt nodeOpt) {
 
 type Pipeline struct {
 	node
-	Forms []*Command
+	Not      bool
+	Commands []*Command
 }
 
 // Pipeline = Form iw { ("|" \ "||") w Form iw }
-func (pp *Pipeline) parse(p *parser, opt nodeOpt) {
-	addTo(&pp.Forms, parse(p, &Command{}, opt))
+func (pl *Pipeline) parse(p *parser, opt nodeOpt) {
+	pl.Not = p.maybeWord("!", opt)
+	addTo(&pl.Commands, parse(p, &Command{}, opt))
 	p.inlineWhitespace()
 	for p.hasPrefix("|") && !p.hasPrefix("||") {
 		// | should be meta
 		p.consumePrefix("|")
 		p.whitespace()
-		addTo(&pp.Forms, parse(p, &Command{}, opt))
+		addTo(&pl.Commands, parse(p, &Command{}, opt))
 		p.inlineWhitespace()
 	}
 }

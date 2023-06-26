@@ -221,11 +221,11 @@ func shouldSkipAndOr(and bool, lastStatus int) bool {
 	return (and && lastStatus != 0) || (!and && lastStatus == 0)
 }
 
-func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
-	n := len(ch.Forms)
+func (fm *frame) pipeline(pl *parse.Pipeline) (int, bool) {
+	n := len(pl.Commands)
 	if n == 1 {
 		// Short path
-		f := ch.Forms[0]
+		f := pl.Commands[0]
 		if len(f.Redirs) > 0 {
 			files := cloneSlice(fm.files)
 			defer func() { fm.files = files }()
@@ -244,7 +244,7 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 				pipes[j][0].Close()
 				pipes[j][1].Close()
 			}
-			fm.diag(ch, "unable to create pipe for pipeline:", err)
+			fm.diag(pl, "unable to create pipe for pipeline:", err)
 			return StatusPipeError, true
 		}
 		pipes[i][0], pipes[i][1] = r, w
@@ -255,7 +255,7 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 
 	var lastStatus int
 	var lastOK bool
-	for i, f := range ch.Forms {
+	for i, f := range pl.Commands {
 		var newFm *frame
 		if i < n-1 {
 			newFm = fm.cloneForSubshell()
@@ -291,7 +291,17 @@ func (fm *frame) pipeline(ch *parse.Pipeline) (int, bool) {
 		}(i, f)
 	}
 	wg.Wait()
+	if pl.Not {
+		return not(lastStatus), lastOK
+	}
 	return lastStatus, lastOK
+}
+
+func not(status int) int {
+	if status == 0 {
+		return 1
+	}
+	return 0
 }
 
 func (fm *frame) command(c *parse.Command) (int, bool) {
