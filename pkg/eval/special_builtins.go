@@ -117,9 +117,28 @@ func readonly(*frame, []string) (int, bool) {
 	return 0, true
 }
 
-func returnCmd(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
+func returnCmd(fm *frame, args []string) (int, bool) {
+	var status int
+	switch len(args) {
+	case 0:
+		status = fm.lastPipelineStatus
+	case 1:
+		n, err := strconv.Atoi(args[0])
+		if err != nil {
+			fm.badCommandLine("argument must be number, got %q", args[0])
+			return StatusBadCommandLine, false
+		}
+		if n < 0 {
+			fm.badCommandLine("argument must be non-negative, got %v", n)
+			return StatusBadCommandLine, false
+		}
+		status = n
+	default:
+		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
+		return StatusBadCommandLine, false
+	}
+	fm.fnAbort = true
+	return status, false
 }
 
 // https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#set

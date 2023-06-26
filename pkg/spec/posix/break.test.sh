@@ -61,13 +61,13 @@ foo
 break -1
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 
-#### break raises fatal error when given superfluous more arguments
+#### break raises fatal error when given superfluous arguments
 break 1 10
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 
 #### break exits outermost loop when n > number of enclosing loops
 for x in foo bar; do

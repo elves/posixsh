@@ -9,10 +9,10 @@ eval echo \' foo \' bar
 ## END
 
 #### eval throws a fatal error on syntax error
-eval '$'
+eval 'if; fi'
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 
 #### Status of eval is the status of the last command
 eval 'false'

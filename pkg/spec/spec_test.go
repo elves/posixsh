@@ -92,7 +92,7 @@ func skipReason(s spec) string {
 	if caseRegexp.MatchString(s.code) {
 		return "code uses 'case'"
 	}
-	if strings.Contains(s.code, "should not get here") {
+	if strings.HasPrefix(s.suite, "oil/") && strings.Contains(s.code, "should not get here") {
 		return "code tests error handling behavior"
 	}
 	switch s.suite {

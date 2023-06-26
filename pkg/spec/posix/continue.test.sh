@@ -70,13 +70,13 @@ bar
 continue -1
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 
-#### continue raises fatal error when given superfluous more arguments
+#### continue raises fatal error when given superfluous arguments
 continue 1 10
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 
 #### continue exits outermost loop when n > number of enclosing loops
 for x in foo bar foobar; do

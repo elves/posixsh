@@ -1,15 +1,15 @@
 #### Syntax error is fatal
-echo $
+if; fi
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 ## stderr-regexp: .+
 
 #### Error from special builtin is fatal
 break 1 2 3 # break is a special builtin
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 ## stderr-regexp: .+
 
 # TODO:
@@ -19,7 +19,7 @@ echo should not get here
 break < bad-file
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 ## stderr-regexp: .+
 
 #### Redirection error with other utilities are not fatal
@@ -41,7 +41,7 @@ echo should get here
 echo $(( 1 /*/ 2 ))
 echo should not get here
 ## status: [1, 127]
-## stdout:
+## stdout-json: ""
 ## stderr-regexp: .+
 
 #### Fatal errors in subshell only exit the subshell

@@ -81,7 +81,7 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, nil}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, nil, 0, false}
 }
 
 type frame struct {
@@ -116,6 +116,12 @@ type frame struct {
 	// bash and ksh all only recognize lexically enclosing loops.
 	loopDepth int
 	loopAbort *loopAbort
+	// Used to implement return:
+	//
+	// - fnLevel is incremented by (*frame).runSimple when calling a function.
+	// - fnAbort is set to true by the return command.
+	fnLevel int
+	fnAbort bool
 }
 
 type loopAbort struct {
@@ -134,9 +140,7 @@ func (fm *frame) cloneForSubshell() *frame {
 		// all of dash, bash, ksh and zsh let subshells inherit $?, so we follow
 		// their behavior.
 		fm.lastPipelineStatus,
-		0,
-		0,
-		nil,
+		0, 0, nil, 0, false,
 	}
 }
 
@@ -366,6 +370,7 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	if !ok {
 		return StatusExpansionError, false
 	}
+	isSpecial := len(words) > 0 && specialBuiltins[words[0]] != nil
 
 	// Redirections are only permanent when we're running "exec".
 	permRedir := len(words) > 0 && words[0] == "exec"
@@ -382,14 +387,18 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 			defer cleanup()
 		}
 		if status != 0 {
-			// TODO: Make the error fatal if command is special builtin.
+			if isSpecial {
+				// POSIX specifies that redirection errors are fatal when
+				// running a special builtin.
+				return status, false
+			}
 			return status, ok
 		}
 	}
 
 	// Assignments are permanent if there is no command, or if the command is a
 	// special builtin.
-	permAssign := len(words) == 0 || specialBuiltins[words[0]] != nil
+	permAssign := len(words) == 0 || isSpecial
 	for _, assign := range c.Assigns {
 		exp, ok := fm.compound(assign.RHS)
 		if !ok {
@@ -432,8 +441,14 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		// POSIX specifies that $0 is unchanged during a function call, but
 		// position parameters are changed to be function arguments
 		fm.arguments = append([]string{fm.arguments[0]}, words[1:]...)
+		fm.fnLevel++
 		status, ok := fm.command(fn)
+		fm.fnLevel--
 		fm.arguments = oldArgs
+		if fm.fnAbort {
+			fm.fnAbort = false
+			return status, true
+		}
 		return status, ok
 	}
 

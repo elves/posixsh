@@ -95,15 +95,7 @@ f lorem ipsum
 ## argv-json: ["/bin/sh", "foo", "bar", "foobar"]
 ## stdout: /bin/sh
 
-# TODO:
-# #### return
-# f() {
-#     echo a
-#     return
-#     echo b
-# }
-# f
-# ## stdout: a
+# Effect of return is tested in its own test file.
 
 #### Status of a successful function declaration is 0
 f() { :; }
