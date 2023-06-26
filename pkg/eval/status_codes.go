@@ -23,6 +23,10 @@ const (
 	// Same as dash and ksh; bash and zsh use 1. Tested with:
 	//     $sh -c 'unset -x'
 	StatusBadCommandLine = 2
+	// Same as dash and bash (when POSIXLY_CORRECT=1), which treat this error as
+	// a syntax error. Ksh uses 1. Zsh doesn't consider this an error.
+	//     $sh -c 'break() { ; }'
+	StatusInvalidFunctionName = 2
 
 	StatusNotImplemented = 99
 

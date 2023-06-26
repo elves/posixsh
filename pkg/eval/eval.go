@@ -311,11 +311,16 @@ func (fm *frame) command(c *parse.Command) (int, bool) {
 	case parse.FnDef:
 		return fm.runFnDef(c, data)
 	default:
-		// Redirections are performed first for the rest of the types.
+		// For the rest of command types, redirections are always performed
+		// first and never permanent.
 		//
 		// This duplicates code in (*frame).runSimple.
-		//
-		// TODO: Redirections should not affect the frame itself.
+		if len(c.Redirs) > 0 {
+			savedFiles := cloneSlice(fm.files)
+			defer func() {
+				fm.files = savedFiles
+			}()
+		}
 		for _, rd := range c.Redirs {
 			status, ok, cleanup := fm.redir(rd)
 			if cleanup != nil {
@@ -362,8 +367,9 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		return StatusExpansionError, false
 	}
 
-	if len(c.Redirs) > 0 && !(len(words) > 0 && words[0] == "exec") {
-		// Undo redirections unless we're running "exec".
+	// Redirections are only permanent when we're running "exec".
+	permRedir := len(words) > 0 && words[0] == "exec"
+	if len(c.Redirs) > 0 && !permRedir {
 		savedFiles := cloneSlice(fm.files)
 		defer func() {
 			fm.files = savedFiles
@@ -423,7 +429,9 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	// Functions?
 	if fn, ok := fm.functions[words[0]]; ok {
 		oldArgs := fm.arguments
-		fm.arguments = words
+		// POSIX specifies that $0 is unchanged during a function call, but
+		// position parameters are changed to be function arguments
+		fm.arguments = append([]string{fm.arguments[0]}, words[1:]...)
 		status, ok := fm.command(fn)
 		fm.arguments = oldArgs
 		return status, ok
@@ -493,6 +501,10 @@ func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {
 		return StatusExpansionError, false
 	}
 	name := exp.expandOneString()
+	if _, isSpecial := specialBuiltins[name]; isSpecial {
+		fm.diag(c, "invalid function name %v", name)
+		return StatusInvalidFunctionName, false
+	}
 	fm.functions[name] = data.Body
 	return 0, true
 }
