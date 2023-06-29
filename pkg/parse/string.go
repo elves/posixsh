@@ -32,17 +32,17 @@ func _() {
 	var x [1]struct{}
 	_ = x[InvalidPrimary-0]
 	_ = x[BarewordPrimary-1]
-	_ = x[SingleQuotedPrimary-2]
-	_ = x[DoubleQuotedPrimary-3]
-	_ = x[ArithmeticPrimary-4]
-	_ = x[WildcardCharPrimary-5]
+	_ = x[EscapedPrimary-2]
+	_ = x[SingleQuotedPrimary-3]
+	_ = x[DoubleQuotedPrimary-4]
+	_ = x[ArithmeticPrimary-5]
 	_ = x[OutputCapturePrimary-6]
 	_ = x[VariablePrimary-7]
 }
 
-const _PrimaryType_name = "InvalidPrimaryBarewordPrimarySingleQuotedPrimaryDoubleQuotedPrimaryArithmeticPrimaryWildcardCharPrimaryOutputCapturePrimaryVariablePrimary"
+const _PrimaryType_name = "InvalidPrimaryBarewordPrimaryEscapedPrimarySingleQuotedPrimaryDoubleQuotedPrimaryArithmeticPrimaryOutputCapturePrimaryVariablePrimary"
 
-var _PrimaryType_index = [...]uint8{0, 14, 29, 48, 67, 84, 103, 123, 138}
+var _PrimaryType_index = [...]uint8{0, 14, 29, 43, 62, 81, 98, 118, 133}
 
 func (i PrimaryType) String() string {
 	if i < 0 || i >= PrimaryType(len(_PrimaryType_index)-1) {

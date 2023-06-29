@@ -819,10 +819,9 @@ func (fm *frame) home(n parse.Node, uname string) (string, bool) {
 
 func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 	switch pr.Type {
-	case parse.BarewordPrimary, parse.SingleQuotedPrimary:
-		// Literals don't undergo word splitting. Barewords are considered
-		// "quoted" for this purpose because any metacharacter has to be escaped
-		// to be considered part of a bareword.
+	case parse.BarewordPrimary:
+		return bareword{pr.Value}, true
+	case parse.EscapedPrimary, parse.SingleQuotedPrimary:
 		return literal{pr.Value}, true
 	case parse.DoubleQuotedPrimary:
 		return fm.segments(pr.Segments)
@@ -844,9 +843,7 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		//
 		// Interestingly, zsh doesn't perform word splitting on the result of
 		// arithmetic expressions even with "setopt sh_word_split".
-		return scalar{strconv.FormatInt(result, 10)}, true
-	case parse.WildcardCharPrimary:
-		return globMeta{pr.Value[0]}, true
+		return expanded{strconv.FormatInt(result, 10)}, true
 	case parse.OutputCapturePrimary:
 		r, w, err := os.Pipe()
 		if err != nil {
@@ -868,7 +865,7 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		}
 		// Removal of trailing newlines happens independently of and before word
 		// splitting.
-		return scalar{strings.TrimRight(string(output), "\n")}, true
+		return expanded{strings.TrimRight(string(output), "\n")}, true
 	case parse.VariablePrimary:
 		return fm.variable(pr.Variable)
 	default:
@@ -965,7 +962,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 			// follow here. Dash seems to use the length of "$*" instead.
 			n = len(fm.arguments) - 1
 		}
-		return scalar{strconv.Itoa(n)}, true
+		return expanded{strconv.Itoa(n)}, true
 	}
 	if v.Modifier != nil {
 		mod := v.Modifier
@@ -1040,7 +1037,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 				}
 				return array{elems, fm.ifs, name == "@"}, true
 			} else {
-				return scalar{transform(info.scalarVal)}, true
+				return expanded{transform(info.scalarVal)}, true
 			}
 		default:
 			// The parser doesn't parse other modifiers.
@@ -1065,7 +1062,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 	}
 	// If we reach here, expand the variable itself.
 	if info.scalar {
-		return scalar{info.scalarVal}, true
+		return expanded{info.scalarVal}, true
 	}
 	return array{fm.arguments[1:], fm.ifs, name == "@"}, true
 }

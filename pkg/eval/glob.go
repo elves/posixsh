@@ -63,6 +63,10 @@ func globPatternFromWord(w word) (glob.Pattern, bool) {
 				if w[j].meta == '[' {
 					unmatchedLeftBracket++
 				} else if w[j].meta == ']' {
+					if j == i+1 || j == i+2 && w[j-1].text == "!" {
+						// A ] directly after [ or [! is not special.
+						continue
+					}
 					unmatchedLeftBracket--
 					if unmatchedLeftBracket == 0 {
 						matcher := convertCharClassToPredicate(stringifySegs(w[i+1 : j]))

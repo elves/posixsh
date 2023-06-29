@@ -604,6 +604,8 @@ const (
 	// example, in "${a:-&|  foo}", the entire "&|  foo" part can be parsed as
 	// one bareword. This is not specified by POSIX, but supported by all of
 	// dash, bash and ksh.
+	//
+	// TODO: Also admit spaces and tabs.
 	modifierArgExprStopper = " \t}"
 )
 
@@ -639,9 +641,9 @@ func findTildePrefix(s string, opt nodeOpt) string {
 type Primary struct {
 	node
 	Type PrimaryType
-	// String value. Valid for BarewordPrimary, SingleQuotedPrimary and
-	// WildcardCharPrimary. For the first two types, the value contains the
-	// processed value, e.g. the bareword \a has value "a".
+	// String value. Valid for BarewordPrimary, EscapedPrimary and
+	// SingleQuotedPrimary. For the latter two types, the value contains the
+	// string content without the delimiters.
 	Value    string
 	Variable *Variable // Valid for VariablePrimary.
 	Segments []Segment // Valid for DoubleQuotesPrimary / ArithmeticPrimary.
@@ -656,25 +658,24 @@ type PrimaryType int
 
 const (
 	InvalidPrimary PrimaryType = iota
+	// Barewords includes glob characters [ ] ? *, but not escaped characters
+	// like \*.
 	BarewordPrimary
+	EscapedPrimary
 	SingleQuotedPrimary
 	DoubleQuotedPrimary
 	ArithmeticPrimary
-	WildcardCharPrimary
 	OutputCapturePrimary
 	VariablePrimary
 )
 
 const (
-	nonBarewordStarter = "'\"$`[]?*"
+	nonBarewordStarter = "\\'\"$`"
 	// A bareword primary stops where the entire expression stops, or another
 	// non-bareword primary starts.
-	normalBarewordStopper         = normalExprStopper + nonBarewordStarter
-	normalVerbatimBarewordStopper = normalBarewordStopper + "\\"
-
+	normalBarewordStopper = normalExprStopper + nonBarewordStarter
 	// See comment of modifierArgExprStopper.
-	modifierArgBarewordStopper         = modifierArgExprStopper + nonBarewordStarter
-	modifierArgVerbatimBarewordStopper = modifierArgBarewordStopper + "\\"
+	modifierArgBarewordStopper = modifierArgExprStopper + nonBarewordStarter
 )
 
 var barewordStopper = [...]string{
@@ -683,47 +684,22 @@ var barewordStopper = [...]string{
 	modifierArg:  modifierArgBarewordStopper,
 }
 
-var verbatimBarewordStopper = [...]string{
-	normal:       normalVerbatimBarewordStopper,
-	inBackquotes: normalVerbatimBarewordStopper,
-	modifierArg:  modifierArgVerbatimBarewordStopper,
-}
-
 func (pr *Primary) parse(p *parser, opt nodeOpt) {
-	barewordStopper := barewordStopper[opt]
-	verbatimBarewordStopper := verbatimBarewordStopper[opt]
-
 	switch {
-	case p.nextInCompl(barewordStopper):
+	case p.nextInCompl(barewordStopper[opt]):
 		pr.Type = BarewordPrimary
-		// Optimization: Consume a prefix that does not contain backslashes.
-		// This avoid building a strings.Builder when the bareword is free of
-		// backslashes; we call that a "verbatim bareword".
-		value := p.consumeWhileNotIn(verbatimBarewordStopper)
-		if !p.hasPrefix("\\") {
-			// One of barewordStopper runes or EOF was encounterd.
-			pr.Value = value
-			return
+		pr.Value = p.consumeWhileNotIn(barewordStopper[opt])
+	case p.consumePrefix("\\"):
+		pr.Type = EscapedPrimary
+		// Note: Line continuations are already handled.
+		if p.eof() {
+			// This behavior doesn't seem to be specified by POSIX, but all of
+			// dash, bash, ksh (but not zsh) treat \ before EOF as a literal \.
+			pr.Value = "\\"
+		} else {
+			_, len := utf8.DecodeRuneInString(p.rest())
+			pr.Value = p.consume(len)
 		}
-		var sb strings.Builder
-		sb.WriteString(value)
-		lastBackslash := false
-		p.consumeWhile(func(r rune) bool {
-			if lastBackslash {
-				sb.WriteRune(r)
-				lastBackslash = false
-				return true
-			} else if r == '\\' {
-				lastBackslash = true
-				return true
-			} else if runeIn(r, barewordStopper) {
-				return false
-			} else {
-				sb.WriteRune(r)
-				return true
-			}
-		})
-		pr.Value = sb.String()
 	case p.consumePrefix("'"):
 		pr.Type = SingleQuotedPrimary
 		begin := p.pos
@@ -774,9 +750,6 @@ func (pr *Primary) parse(p *parser, opt nodeOpt) {
 			addTo(&pr.Segments, Segment(parse(p, &ArithSegment{}, &unmatchedLeftParens)))
 		}
 		p.errorf("unterminated arithmetic expression")
-	case p.hasPrefixIn("[", "]", "*", "?") != "":
-		pr.Type = WildcardCharPrimary
-		pr.Value = p.consume(1)
 	case p.consumePrefix("`"):
 		pr.Type = OutputCapturePrimary
 		pr.Body = parse(p, &Chunk{}, inBackquotes)

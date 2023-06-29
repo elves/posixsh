@@ -70,12 +70,13 @@ type wordSegment struct {
 	text string
 }
 
-// A scalar that is subject to field splitting and parsing of glob characters.
-type scalar struct{ s string }
+// A bareword, subject to parsing of glob characters (which are parsed as part
+// of barewords) but not field splitting.
+type bareword struct{ s string }
 
-func (u scalar) expand(ifs string) []word { return parseGlob(split(u.s, ifs)) }
-func (u scalar) expandOneWord() word      { return parseGlobOne(u.s) }
-func (u scalar) expandOneString() string  { return u.s }
+func (b bareword) expand(ifs string) []word { return []word{parseGlobOne(b.s)} }
+func (b bareword) expandOneWord() word      { return parseGlobOne(b.s) }
+func (b bareword) expandOneString() string  { return b.s }
 
 // A literal that is *not* subject to field splitting and pathname expansion.
 type literal struct{ s string }
@@ -84,12 +85,13 @@ func (l literal) expand(ifs string) []word { return []word{l.expandOneWord()} }
 func (l literal) expandOneWord() word      { return word{{text: l.s}} }
 func (l literal) expandOneString() string  { return l.s }
 
-// A globbing metacharacter.
-type globMeta struct{ m byte }
+// A word resulting from an unquoted expansion, subject to field splitting and
+// parsing of glob characters.
+type expanded struct{ s string }
 
-func (gm globMeta) expand(ifs string) []word { return []word{gm.expandOneWord()} }
-func (gm globMeta) expandOneWord() word      { return word{{meta: gm.m}} }
-func (gm globMeta) expandOneString() string  { return string([]byte{gm.m}) }
+func (e expanded) expand(ifs string) []word { return parseGlob(split(e.s, ifs)) }
+func (e expanded) expandOneWord() word      { return parseGlobOne(e.s) }
+func (e expanded) expandOneString() string  { return e.s }
 
 // Evaluation result of a compound expression.
 type compound struct{ elems []expander }

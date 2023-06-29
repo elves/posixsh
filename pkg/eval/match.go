@@ -29,6 +29,10 @@ func regexpPatternFromWord(w word, shortest bool) string {
 				if w[j].meta == '[' {
 					unmatchedLeftBracket++
 				} else if w[j].meta == ']' {
+					if j == i+1 || j == i+2 && w[j-1].text == "!" {
+						// A ] directly after [ or [! is not special.
+						continue
+					}
 					unmatchedLeftBracket--
 					if unmatchedLeftBracket == 0 {
 						sb.WriteString(convertCharClassToRegexp(stringifySegs(w[i+1 : j])))
