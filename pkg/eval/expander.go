@@ -62,35 +62,46 @@ type expander interface {
 
 type word []wordSegment
 
-// A union of either one wildcard character (one of ? * [ ]) or a segment of
-// literal text.
+// A word segment, along with the bit of whether it is quoted or not for the
+// purpose of parsing of glob characters.
 type wordSegment struct {
-	// If 0, this segment is a run of literal text.
-	meta byte
-	text string
+	text   string
+	quoted bool
 }
+
+// Constructors of words with one segment.
+
+func wordOfOneSeg(s string, q bool) word {
+	if s == "" {
+		return nil
+	}
+	return word{{s, q}}
+}
+
+func quotedWord(s string) word   { return wordOfOneSeg(s, true) }
+func unquotedWord(s string) word { return wordOfOneSeg(s, false) }
 
 // A bareword, subject to parsing of glob characters (which are parsed as part
 // of barewords) but not field splitting.
 type bareword struct{ s string }
 
-func (b bareword) expand(ifs string) []word { return []word{parseGlobOne(b.s)} }
-func (b bareword) expandOneWord() word      { return parseGlobOne(b.s) }
+func (b bareword) expand(ifs string) []word { return []word{b.expandOneWord()} }
+func (b bareword) expandOneWord() word      { return unquotedWord(b.s) }
 func (b bareword) expandOneString() string  { return b.s }
 
-// A literal that is *not* subject to field splitting and pathname expansion.
+// A literal that is *not* subject to field splitting or pathname expansion.
 type literal struct{ s string }
 
 func (l literal) expand(ifs string) []word { return []word{l.expandOneWord()} }
-func (l literal) expandOneWord() word      { return word{{text: l.s}} }
+func (l literal) expandOneWord() word      { return quotedWord(l.s) }
 func (l literal) expandOneString() string  { return l.s }
 
 // A word resulting from an unquoted expansion, subject to field splitting and
 // parsing of glob characters.
 type expanded struct{ s string }
 
-func (e expanded) expand(ifs string) []word { return parseGlob(split(e.s, ifs)) }
-func (e expanded) expandOneWord() word      { return parseGlobOne(e.s) }
+func (e expanded) expand(ifs string) []word { return each(unquotedWord, split(e.s, ifs)) }
+func (e expanded) expandOneWord() word      { return unquotedWord(e.s) }
 func (e expanded) expandOneString() string  { return e.s }
 
 // Evaluation result of a compound expression.
@@ -112,13 +123,9 @@ func (dq doubleQuoted) expand(ifs string) []word {
 	return expandFromElems([]word{nil}, dq.elems, func(e expander) []word {
 		// Special-case $@ inside double quotes.
 		if a, ok := e.(array); ok && a.isAt {
-			words := make([]word, len(a.elems))
-			for i, elem := range a.elems {
-				words[i] = word{{text: elem}}
-			}
-			return words
+			return each(quotedWord, a.elems)
 		}
-		return []word{{{text: e.expandOneString()}}}
+		return []word{quotedWord(e.expandOneString())}
 	})
 }
 
@@ -140,13 +147,13 @@ func (a array) expand(ifs string) []word {
 	var words []word
 	for _, arg := range a.elems {
 		if arg != "" {
-			words = append(words, parseGlob(split(arg, ifs))...)
+			words = append(words, each(unquotedWord, split(arg, ifs))...)
 		}
 	}
 	return words
 }
 
-func (a array) expandOneWord() word { return parseGlobOne(a.expandOneString()) }
+func (a array) expandOneWord() word { return unquotedWord(a.expandOneString()) }
 
 func (a array) expandOneString() string {
 	// POSIX leaves unspecified how $@ expands in a one-word environment; we let
@@ -162,6 +169,8 @@ func (a array) expandOneString() string {
 // Provides expansion by concatenating the expansion of elems, using initWords
 // as the initial value for the expansion result, and the f function to expand
 // each element.
+//
+// Note: May mutate initWords.
 func expandFromElems(initWords []word, elems []expander, f func(expander) []word) []word {
 	words := initWords
 	for _, elem := range elems {
@@ -192,37 +201,15 @@ func expandOneStringFromElems(elems []expander) string {
 	return sb.String()
 }
 
+// Concatenates two words.
+//
+// Note: May mutate w1.
 func appendWord(w1, w2 word) word {
-	if len(w1) > 0 && len(w2) > 0 && w1[len(w1)-1].text != "" && w2[0].text != "" {
+	if len(w1) > 0 && len(w2) > 0 && w1[len(w1)-1].quoted == w2[0].quoted {
 		w1[len(w1)-1].text += w2[0].text
 		w2 = w2[1:]
 	}
 	return append(w1, w2...)
-}
-
-func parseGlob(fields []string) []word {
-	ts := make([]word, len(fields))
-	for i, s := range fields {
-		ts[i] = parseGlobOne(s)
-	}
-	return ts
-}
-
-func parseGlobOne(s string) word {
-	var segs []wordSegment
-	for s != "" {
-		i := strings.IndexAny(s, "[]?*")
-		if i == -1 {
-			segs = append(segs, wordSegment{text: s})
-			break
-		}
-		if i > 0 {
-			segs = append(segs, wordSegment{text: s[:i]})
-		}
-		segs = append(segs, wordSegment{meta: s[i]})
-		s = s[i+1:]
-	}
-	return segs
 }
 
 func split(s, ifs string) []string {
