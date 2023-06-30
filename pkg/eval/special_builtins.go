@@ -19,6 +19,8 @@ var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 	":":        colon,
 	"continue": continueCmd,
 	// "." and "eval" are set in init
+	"exec":     exec,
+	"exit":     exit,
 	"export":   export,
 	"readonly": readonly,
 	"return":   returnCmd,
@@ -93,6 +95,22 @@ func eval(fm *frame, args []string) (int, bool) {
 		return StatusSyntaxError, false
 	}
 	return fm.chunk(n)
+}
+
+func exec(*frame, []string) (int, bool) {
+	// TODO
+	return 0, true
+}
+
+func exit(fm *frame, args []string) (int, bool) {
+	// POSIX doesn't specify the status should be when exit is called without an
+	// argument, but all of dash, bash, ksh and zsh use $?; we follow this
+	// behavior.
+	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	return status, false
 }
 
 func export(*frame, []string) (int, bool) {
