@@ -7,17 +7,8 @@ import (
 	"src.elv.sh/pkg/glob"
 )
 
-// Converts a [word] to a regexp pattern.
-//
-// This function is somewhat similar to [globPatternFromWord], but they don't
-// share the implementation for two reasons:
-//
-//   - They convert a word to different types. Filename generation and pattern
-//     matching are different tasks.
-//
-//   - The parsing of character class is different: when parsing a word for
-//     filename generation, [...] must not contain any /. This restriction does
-//     not apply when parsing a word for pattern matching.
+// Converts a [word] to a regexp pattern. This doesn't compile the pattern so
+// that the caller use this as part of a bigger pattern.
 func regexpPatternFromWord(w word, shortest bool) string {
 	anyString := ".*"
 	if shortest {
@@ -65,22 +56,22 @@ func generateFilenames(words []word) []string {
 // Converts a [word] to a [glob.Pattern]. Also returns whether any metacharacter
 // has been parsed - "?", "*" and "[" that is successfully matched.
 func globPatternFromWord(w word) (glob.Pattern, bool) {
-	var globSegs []glob.Segment
+	var segs []glob.Segment
 	hasMeta := false
 	// Split the word by slashes, and process the components separately. The
 	// splitting needs to be done before character classes are parsed, as
 	// specified by POSIX in 2.13.3 "Patterns used for filename expansion".
 	for i, w := range splitWordBySlashes(w) {
 		if i > 0 {
-			globSegs = append(globSegs, glob.Slash{})
+			segs = append(segs, glob.Slash{})
 		}
 		parsePattern(w, parsePatternFuncs{
 			anyChar: func() {
-				globSegs = append(globSegs, glob.Wild{Type: glob.Question})
+				segs = append(segs, glob.Wild{Type: glob.Question})
 				hasMeta = true
 			},
 			charClass: func(re *regexp.Regexp) {
-				globSegs = append(globSegs, glob.Wild{
+				segs = append(segs, glob.Wild{
 					Type: glob.Question,
 					Matchers: []func(rune) bool{
 						func(r rune) bool {
@@ -91,20 +82,20 @@ func globPatternFromWord(w word) (glob.Pattern, bool) {
 				hasMeta = true
 			},
 			anyString: func() {
-				globSegs = append(globSegs, glob.Wild{Type: glob.Star})
+				segs = append(segs, glob.Wild{Type: glob.Star})
 				hasMeta = true
 			},
 			literal: func(s string) {
-				if n := len(globSegs); n > 0 && glob.IsLiteral(globSegs[n-1]) {
-					globSegs[n-1] = glob.Literal{
-						Data: globSegs[n-1].(glob.Literal).Data + s}
+				if n := len(segs); n > 0 && glob.IsLiteral(segs[n-1]) {
+					segs[n-1] = glob.Literal{
+						Data: segs[n-1].(glob.Literal).Data + s}
 				} else {
-					globSegs = append(globSegs, glob.Literal{Data: s})
+					segs = append(segs, glob.Literal{Data: s})
 				}
 			},
 		})
 	}
-	return glob.Pattern{Segments: globSegs}, hasMeta
+	return glob.Pattern{Segments: segs}, hasMeta
 }
 
 // Splits a word by slashes, whether quoted or unquoted.
