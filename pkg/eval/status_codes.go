@@ -45,6 +45,8 @@ const (
 	//     $sh -c '. ./foobar'
 	StatusFileToSourceNotReadable = 2
 
+	StatusRUsageError = 2
+
 	StatusNotImplemented = 99
 
 	// Relatively rare error conditions. Not sure what other shells use for

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/elves/posixsh/pkg/parse"
+	"golang.org/x/sys/unix"
 )
 
 // Some builtins are designated "special" by POSIX; the return value includes a
@@ -161,8 +162,25 @@ func shift(fm *frame, args []string) (int, bool) {
 	return 0, true
 }
 
-func times(*frame, []string) (int, bool) {
-	// TODO
+func times(fm *frame, args []string) (int, bool) {
+	if len(args) != 0 {
+		fm.badCommandLine("the times command accepts no arguments")
+		return StatusBadCommandLine, false
+	}
+	// [unix.Times] is not defined for darwin; use the newer [unix.Getrusage]
+	// instead.
+	print := func(who int) {
+		var rusage unix.Rusage
+		err := unix.Getrusage(who, &rusage)
+		if err != nil {
+			fmt.Fprintln(fm.files[1], "?m?s ?m?s")
+		} else {
+			fmt.Fprintln(fm.files[1],
+				formatTimevalForTimes(rusage.Utime), formatTimevalForTimes(rusage.Stime))
+		}
+	}
+	print(unix.RUSAGE_SELF)
+	print(unix.RUSAGE_CHILDREN)
 	return 0, true
 }
 
@@ -241,4 +259,9 @@ func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
 		return 0, false
 	}
+}
+
+func formatTimevalForTimes(t unix.Timeval) string {
+	return fmt.Sprintf("%dm%fs",
+		t.Sec/60, float64(t.Sec%60)+float64(t.Usec)/1e6)
 }
