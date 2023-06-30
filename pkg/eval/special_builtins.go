@@ -147,8 +147,17 @@ func set(fm *frame, args []string) (int, bool) {
 	return 0, true
 }
 
-func shift(*frame, []string) (int, bool) {
-	// TODO
+func shift(fm *frame, args []string) (int, bool) {
+	n, ok := parseOneInt(fm, args, 1)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if n > len(fm.arguments)-1 {
+		fm.badCommandLine("argument to shift must not be larger than $#")
+		return StatusBadCommandLine, false
+	}
+	copy(fm.arguments[1:], fm.arguments[1+n:])
+	fm.arguments = fm.arguments[:len(fm.arguments)-n]
 	return 0, true
 }
 
