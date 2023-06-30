@@ -20,6 +20,23 @@ foo bar
 lorem ipsum
 ## END
 
-# TODO: Test unset functions with -f
-
-# TODO: Test error when both -f and -v are given
+#### unset functions with -f
+true() {
+    echo new true
+}
+false() {
+    echo new false
+    return 1
+}
+true
+false
+echo after unset
+unset -f true false
+true
+false
+## status: [1, 127]
+## STDOUT:
+new true
+new false
+after unset
+## END
