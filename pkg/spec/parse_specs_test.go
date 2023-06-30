@@ -38,7 +38,8 @@ var (
 //   - status: Aside from a single number, also supports intervals like "[1,
 //     10]".
 //
-//   - stderr-regexp: Asserts that the stderr matches the given regexp.
+//   - std{out,err}-regexp: Asserts that the std{out,err} matches the given
+//     regexp.
 //
 // Shell-specific metadata are handled as follows:
 //
@@ -85,8 +86,7 @@ func parseSpecFile(filename, content string) []spec {
 		var codeBuilder strings.Builder
 		var argv []string
 		var status []interval
-		var stdout, stderr []string
-		var stderrRegexp []*regexp.Regexp
+		var stdout, stderr []regexpOrString
 		skipSpec := false
 		// Parse code lines
 		for i++; i < len(lines) && !isName(lines[i]) && !isMetadata(lines[i]); i++ {
@@ -126,6 +126,14 @@ func parseSpecFile(filename, content string) []spec {
 			}
 
 			value = strings.TrimLeft(value, " ")
+			addOutput := func(re *regexp.Regexp, s string) {
+				rs := regexpOrString{re, s}
+				if strings.HasPrefix(strings.ToLower(key), "stdout") {
+					stdout = append(stdout, rs)
+				} else {
+					stderr = append(stderr, rs)
+				}
+			}
 			switch key {
 			case "code":
 				codeBuilder.WriteString(value)
@@ -152,54 +160,39 @@ func parseSpecFile(filename, content string) []spec {
 				} else {
 					status = append(status, interval{i, i})
 				}
-			case "stdout":
-				stdout = append(stdout, value+"\n")
-			case "stdout-json":
+			case "stdout", "stderr":
+				addOutput(nil, value+"\n")
+			case "stdout-json", "stderr-json":
 				var s string
 				err := json.Unmarshal([]byte(value), &s)
 				if err != nil {
-					warn("can't parse stdout-json as JSON")
+					warn(fmt.Sprintf("can't parse %v as JSON", key))
 				} else {
-					stdout = append(stdout, s)
+					addOutput(nil, s)
 				}
-			case "stdout-repr":
+			case "stdout-repr", "stderr-repr":
 				if value[0] == '\'' {
 					value = "\"" + value[1:len(value)-1] + "\""
 				}
 				value = strings.ReplaceAll(value, `\0`, `\x00`)
 				s, err := strconv.Unquote(value)
 				if err != nil {
-					warn("can't parse status-repr")
+					warn("can't parse " + key)
 				} else {
-					stdout = append(stdout, s)
+					addOutput(nil, s)
 				}
-			case "stderr":
-				stderr = append(stderr, value+"\n")
-			case "stderr-json":
-				var s string
-				err := json.Unmarshal([]byte(value), &s)
-				if err != nil {
-					warn("can't parse stderr-json as JSON")
-				} else {
-					stderr = append(stderr, s)
-				}
-			case "stderr-regexp":
+			case "stdout-regexp", "stderr-regexp":
 				pattern, err := regexp.Compile("^(?s)" + value + "$")
 				if err != nil {
-					warn("can't parse stderr-regexp: " + err.Error())
+					warn(fmt.Sprintf("can't parse %v: %v", key, err))
 				} else {
-					stderrRegexp = append(stderrRegexp, pattern)
+					addOutput(pattern, "")
 				}
-			case "STDOUT":
+			case "STDOUT", "STDERR":
 				if value != "" {
 					warn("trailing content")
 				}
-				stdout = append(stdout, readMultiLine())
-			case "STDERR":
-				if value != "" {
-					warn("trailing content")
-				}
-				stderr = append(stderr, readMultiLine())
+				addOutput(nil, readMultiLine())
 			default:
 				warn("unknown key " + key)
 			}
@@ -211,7 +204,7 @@ func parseSpecFile(filename, content string) []spec {
 			status = []interval{{0, 0}}
 		}
 		specs = append(specs, spec{
-			filename, name, codeBuilder.String(), argv, status, stdout, stderr, stderrRegexp})
+			filename, name, codeBuilder.String(), argv, status, stdout, stderr})
 	}
 	return specs
 }

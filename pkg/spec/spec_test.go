@@ -24,10 +24,21 @@ type spec struct {
 
 	// No elements = don't check.
 	// Multiple elements = any one is OK.
-	wantStatus       []interval
-	wantStdout       []string
-	wantStderr       []string
-	wantStderrRegexp []*regexp.Regexp
+	wantStatus []interval
+	wantStdout []regexpOrString
+	wantStderr []regexpOrString
+}
+
+type regexpOrString struct {
+	re *regexp.Regexp
+	s  string
+}
+
+func (rs regexpOrString) match(s string) bool {
+	if rs.re != nil {
+		return rs.re.MatchString(s)
+	}
+	return rs.s == s
 }
 
 //go:embed oil posix posix-ext
@@ -56,25 +67,8 @@ func TestSpecs(t *testing.T) {
 					t.Errorf("got status %v, want any of %v", status, spec.wantStatus)
 				}
 			}
-			if len(spec.wantStdout) > 0 {
-				if !in(stdout, spec.wantStdout) {
-					t.Errorf("got stdout %q", stdout)
-					for i, want := range spec.wantStdout {
-						t.Errorf("-want%v +got:\n%v", i, cmp.Diff(want, stdout))
-					}
-				}
-			}
-			if len(spec.wantStderr)+len(spec.wantStderrRegexp) > 0 {
-				if !in(stderr, spec.wantStderr) && !matchAny(stderr, spec.wantStderrRegexp, (*regexp.Regexp).MatchString) {
-					t.Errorf("got stderr %q", stderr)
-					for i, want := range spec.wantStderr {
-						t.Errorf("-want%v +got:\n%v", i, cmp.Diff(want, stderr))
-					}
-					for _, want := range spec.wantStderrRegexp {
-						t.Errorf("or matching regexp %q", want.String())
-					}
-				}
-			}
+			testOutput(t, "stdout", stdout, spec.wantStdout)
+			testOutput(t, "stderr", stderr, spec.wantStderr)
 
 			if t.Failed() {
 				t.Logf("code is:\n%v", spec.code)
@@ -140,8 +134,21 @@ func outputPipe() (*os.File, func() string) {
 	}
 }
 
-func in[T comparable](x T, ys []T) bool {
-	return matchAny(x, ys, func(x, y T) bool { return x == y })
+func testOutput(t *testing.T, what, got string, wants []regexpOrString) {
+	t.Helper()
+	if len(wants) == 0 {
+		return
+	}
+	if !matchAny(got, wants, regexpOrString.match) {
+		t.Errorf("got %v %q, want any of %v choices", what, got, len(wants))
+		for i, want := range wants {
+			if want.re != nil {
+				t.Errorf("#%d: string matching regexp %q", i, want.re.String())
+			} else {
+				t.Errorf("#%d: -want +got:\n%v", i, cmp.Diff(want.s, got))
+			}
+		}
+	}
 }
 
 func matchAny[V, M any](value V, matchers []M, match func(M, V) bool) bool {
