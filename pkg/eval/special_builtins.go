@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -17,7 +18,7 @@ var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 	"break":    breakCmd,
 	":":        colon,
 	"continue": continueCmd,
-	".":        dot,
+	// "." and "eval" are set in init
 	"export":   export,
 	"readonly": readonly,
 	"return":   returnCmd,
@@ -31,6 +32,7 @@ var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 func init() {
 	// Some special builtins refer to methods that depend on specialBuiltins, so
 	// initialize them here to avoid dependency cycle.
+	specialBuiltins["."] = dot
 	specialBuiltins["eval"] = eval
 }
 
@@ -46,9 +48,37 @@ func continueCmd(fm *frame, args []string) (int, bool) {
 	return abortLoop(fm, args, true)
 }
 
-func dot(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
+func dot(fm *frame, args []string) (int, bool) {
+	if len(args) == 0 {
+		fm.badCommandLine(". requires at least one argument")
+		return StatusBadCommandLine, false
+	}
+	path, ok, _ := fm.lookPath(args[0], 0)
+	if !ok {
+		// TODO: Add range information.
+		fmt.Fprintf(fm.diagFile, "not found: %v\n", args[0])
+		return StatusFileToSourceNotFound, false
+	}
+	bs, err := os.ReadFile(path)
+	if err != nil {
+		// TODO: Add range information.
+		fmt.Fprintf(fm.diagFile, "cannot read %v: %v\n", args[0], err)
+		return StatusFileToSourceNotReadable, false
+	}
+	code := string(bs)
+	n, err := parse.Parse(code)
+	if err != nil {
+		// TODO: Add range information.
+		fmt.Fprintln(fm.diagFile, "syntax error:", err)
+		return StatusSyntaxError, false
+	}
+	// A file sourced by "." can use the return command, like in a function
+	// call. All of bash, ksh and zsh (but not dash) extend this similarity
+	// further by setting the positional arguments within the execution. This is
+	// not specified by POSIX, but we do that too.
+	return fm.callFuncLike(args[1:], func() (int, bool) {
+		return fm.chunk(n)
+	})
 }
 
 func eval(fm *frame, args []string) (int, bool) {

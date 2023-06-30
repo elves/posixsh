@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/user"
 	"regexp"
@@ -437,19 +438,9 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 
 	// Functions?
 	if fn, ok := fm.functions[words[0]]; ok {
-		oldArgs := fm.arguments
-		// POSIX specifies that $0 is unchanged during a function call, but
-		// position parameters are changed to be function arguments
-		fm.arguments = append([]string{fm.arguments[0]}, words[1:]...)
-		fm.fnLevel++
-		status, ok := fm.command(fn)
-		fm.fnLevel--
-		fm.arguments = oldArgs
-		if fm.fnAbort {
-			fm.fnAbort = false
-			return status, true
-		}
-		return status, ok
+		return fm.callFuncLike(words[1:], func() (int, bool) {
+			return fm.command(fn)
+		})
 	}
 
 	// Builtins?
@@ -458,20 +449,15 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 
 	// External commands?
-
-	// TODO: Don't use os.Getwd; virtualize working directory per frame.
-	wd, err := os.Getwd()
-	if err != nil {
-		wd = "/"
-	}
-	path, status := lookPath(words[0], wd, fm.variables["PATH"])
-	if status != 0 {
-		if status == StatusCommandNotFound {
-			fm.diag(c, "command not found: %v", words[0])
-		} else if status == StatusCommandNotExecutable {
+	path, ok, exists := fm.lookPath(words[0], 0o111)
+	if !ok {
+		if exists {
 			fm.diag(c, "command not executable: %v", words[0])
+			return StatusCommandNotExecutable, true
+		} else {
+			fm.diag(c, "command not found: %v", words[0])
+			return StatusCommandNotFound, true
 		}
-		return status, true
 	}
 	words[0] = path
 
@@ -502,12 +488,37 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 }
 
+func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
+	// TODO: Don't use os.Getwd; virtualize working directory per frame.
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "/"
+	}
+	return lookPath(name, wd, fm.variables["PATH"], perm)
+}
+
 func (fm *frame) startProcess(words []string) (*os.Process, error) {
 	return os.StartProcess(words[0], words, &os.ProcAttr{
 		Files: fm.files,
 		// TODO: Only serialize exported variables.
 		Env: serializeEnvMap(fm.variables),
 	})
+}
+
+func (fm *frame) callFuncLike(args []string, f func() (int, bool)) (int, bool) {
+	oldArgs := fm.arguments
+	// POSIX specifies that $0 is unchanged during a function call, but
+	// position parameters are changed to be function arguments.
+	fm.arguments = append([]string{fm.arguments[0]}, args...)
+	fm.fnLevel++
+	status, ok := f()
+	fm.fnLevel--
+	fm.arguments = oldArgs
+	if fm.fnAbort {
+		fm.fnAbort = false
+		return status, true
+	}
+	return status, ok
 }
 
 func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {

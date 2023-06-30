@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,20 +9,19 @@ import (
 
 // Like os/exec.LookPath, but
 //
-//   - Uses the wording directory and PATH given in the argument.
-//   - Returns either [StatusCommandNotFound] or [StatusCommandNotExecutable] in
-//     the second argument if the search is not successful.
+//   - Uses the working directory and PATH given in the argument.
+//
+//   - Also returns whether any non-directory file is found.
 //
 // TODO: Windows support.
-func lookPath(file, wd, paths string) (string, int) {
+func lookPath(file, wd, paths string, perm fs.FileMode) (path string, ok, existsAny bool) {
 	if strings.Contains(file, "/") {
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(wd, file)
 		}
-		status := checkExecutable(file)
-		return file, status
+		ok, exists := checkPerm(file, perm)
+		return file, ok, exists
 	}
-	retStatus := StatusCommandNotFound
 	for _, dir := range filepath.SplitList(paths) {
 		if !filepath.IsAbs(dir) {
 			// Ignore any component that is not absolute for safety. This
@@ -30,23 +30,20 @@ func lookPath(file, wd, paths string) (string, int) {
 			continue
 		}
 		fullpath := filepath.Join(dir, file)
-		status := checkExecutable(fullpath)
-		if status == 0 {
-			return fullpath, 0
-		} else if status == StatusCommandNotExecutable {
-			retStatus = StatusCommandNotExecutable
+		ok, exists := checkPerm(fullpath, perm)
+		if ok {
+			return fullpath, true, true
+		} else if exists {
+			existsAny = true
 		}
 	}
-	return "", retStatus
+	return "", false, existsAny
 }
 
-func checkExecutable(file string) int {
+func checkPerm(file string, perm fs.FileMode) (ok, exists bool) {
 	info, err := os.Stat(file)
 	if err == nil && !info.IsDir() {
-		if info.Mode()&0o111 != 0 {
-			return 0
-		}
-		return StatusCommandNotExecutable
+		return true, info.Mode()&perm != 0
 	}
-	return StatusCommandNotFound
+	return false, false
 }

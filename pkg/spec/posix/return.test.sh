@@ -17,6 +17,13 @@ f
 ## stdout: a
 ## status: 12
 
+#### return aborts file sourced with .
+echo 'echo a; return 10; echo b' > module
+PATH=$PWD:$PATH
+. module
+## stdout: a
+## status: 10
+
 #### Return with no argument uses last pipeline status
 f() {
     false
