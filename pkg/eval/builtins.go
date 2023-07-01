@@ -2,6 +2,7 @@ package eval
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 )
 
@@ -86,11 +87,15 @@ func pwd(fm *frame, args []string) int {
 
 func read(fm *frame, args []string) int {
 	line := getLine(fm.files[0])
-	if len(args) == 0 {
-		fm.variables["REPLY"] = line
-	} else {
-		fm.variables[args[0]] = line
+	varName := "REPLY"
+	if len(args) > 0 {
+		varName = args[0]
 		// TODO: Support multiple arguments:
+	}
+	canSet := fm.variables.Set(varName, line)
+	if !canSet {
+		// TODO: Add range information
+		fmt.Fprintf(fm.files[2], "%v is readonly\n", varName)
 	}
 	return 0
 }

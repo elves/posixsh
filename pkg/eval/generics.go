@@ -7,3 +7,12 @@ func each[X any, Y any](f func(X) Y, xs []X) []Y {
 	}
 	return ys
 }
+
+type set[T comparable] map[T]struct{}
+
+func (s set[T]) add(v T) { s[v] = struct{}{} }
+
+func (s set[T]) has(v T) bool {
+	_, ok := s[v]
+	return ok
+}

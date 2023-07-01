@@ -1,7 +1,6 @@
 package eval
 
 import (
-	"fmt"
 	"src.elv.sh/pkg/getopt"
 )
 
@@ -43,9 +42,4 @@ func (fm *frame) getopt(args []string, optstring string) (parsedOpts, []string, 
 		parsed[byte(opt.Spec.Short)] = opt.Argument
 	}
 	return parsed, args, true
-}
-
-func (fm *frame) badCommandLine(format string, args ...any) {
-	// TODO: Incorporate range information.
-	fmt.Fprintf(fm.diagFile, "bad command line option: "+format+"\n", args...)
 }

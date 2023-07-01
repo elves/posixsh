@@ -19,9 +19,29 @@ import (
 
 type Evaler struct {
 	arguments []string
-	variables map[string]string
+	variables variables
 	functions map[string]*parse.Command
 	files     []*os.File
+}
+
+type variables struct {
+	values map[string]string
+	// Whether a variable is exported or readonly are independent of whether it
+	// is set, so we keep those attributes in separate maps.
+	exported set[string]
+	readonly set[string]
+}
+
+func (v variables) Get(name string) string {
+	return v.values[name]
+}
+
+func (v variables) Set(name, value string) bool {
+	if v.readonly.has(name) {
+		return false
+	}
+	v.values[name] = value
+	return true
 }
 
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
@@ -35,7 +55,7 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 	}
 	return &Evaler{
 		args,
-		initEnvMap(os.Environ()),
+		initVariablesFromEnv(os.Environ()),
 		make(map[string]*parse.Command),
 		files,
 	}
@@ -44,24 +64,34 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 // TODO: Consider storing environment within a frame as a slice of name=value to
 // avoid the conversion overhead.
 
-func initEnvMap(entries []string) map[string]string {
-	m := make(map[string]string, len(entries))
+func initVariablesFromEnv(entries []string) variables {
+	v := variables{
+		values:   make(map[string]string, len(entries)),
+		exported: make(set[string], len(entries)),
+		readonly: make(set[string]),
+	}
 	for _, entry := range entries {
 		// Note: Treat "foo" like "foo=" if such entries ever occur.
 		name, value, _ := strings.Cut(entry, "=")
-		m[name] = value
+		v.values[name] = value
+		v.exported.add(name)
 	}
 	wd, err := os.Getwd()
 	if err == nil {
-		m["PWD"] = wd
+		v.values["PWD"] = wd
+		v.exported.add("PWD")
 	}
-	return m
+	return v
 }
 
-func serializeEnvMap(m map[string]string) []string {
-	entries := make([]string, 0, len(m))
-	for name, value := range m {
-		entries = append(entries, name+"="+value)
+func serializeEnvEntries(v variables) []string {
+	entries := make([]string, 0, len(v.exported))
+	for name := range v.exported {
+		if value, ok := v.values[name]; ok {
+			// Only variables that are both set and exported are exported to the
+			// environment of child processes.
+			entries = append(entries, name+"="+value)
+		}
 	}
 	return entries
 }
@@ -87,7 +117,7 @@ func (ev *Evaler) frame() *frame {
 
 type frame struct {
 	arguments []string
-	variables map[string]string
+	variables variables
 	functions map[string]*parse.Command
 	files     []*os.File
 	// POSIX requires all cases except "special built-in utility error" and
@@ -134,7 +164,8 @@ func (fm *frame) cloneForSubshell() *frame {
 	// TODO: Optimize with copy on write
 	return &frame{
 		cloneSlice(fm.arguments),
-		cloneMap(fm.variables), cloneMap(fm.functions),
+		variables{cloneMap(fm.variables.values), cloneMap(fm.variables.exported), cloneMap(fm.variables.readonly)},
+		cloneMap(fm.functions),
 		cloneSlice(fm.files),
 		fm.diagFile,
 		// POSIX doesn't explicitly specify whether subshells inherit $?, but
@@ -401,22 +432,31 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	// special builtin.
 	permAssign := len(words) == 0 || isSpecial
 	for _, assign := range c.Assigns {
+		if fm.variables.readonly.has(assign.LHS) {
+			fm.diag(assign, "%v is readonly", assign.LHS)
+			// Assigning to a readonly error is a fatal error according to
+			// POSIX.
+			return StatusAssignmentError, false
+		}
+	}
+	for _, assign := range c.Assigns {
 		exp, ok := fm.compound(assign.RHS)
 		if !ok {
 			return StatusExpansionError, false
 		}
 		name := assign.LHS
 		if !permAssign {
-			value, isSet := fm.variables[name]
+			value, isSet := fm.variables.values[name]
 			if !isSet {
-				defer delete(fm.variables, name)
+				defer delete(fm.variables.values, name)
 			} else {
 				defer func() {
-					fm.variables[name] = value
+					fm.variables.values[name] = value
 				}()
 			}
 		}
-		fm.variables[name] = exp.expandOneString()
+		// We have already checked that all variables are not readonly.
+		fm.variables.values[name] = exp.expandOneString()
 	}
 
 	if len(words) == 0 {
@@ -494,14 +534,14 @@ func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
 	if err != nil {
 		wd = "/"
 	}
-	return lookPath(name, wd, fm.variables["PATH"], perm)
+	return lookPath(name, wd, fm.variables.Get("PATH"), perm)
 }
 
 func (fm *frame) startProcess(words []string) (*os.Process, error) {
 	return os.StartProcess(words[0], words, &os.ProcAttr{
 		Files: fm.files,
 		// TODO: Only serialize exported variables.
-		Env: serializeEnvMap(fm.variables),
+		Env: serializeEnvEntries(fm.variables),
 	})
 }
 
@@ -554,7 +594,13 @@ func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 
 	var lastStatus int
 	for _, value := range values {
-		fm.variables[varName] = value
+		canSet := fm.variables.Set(varName, value)
+		if !canSet {
+			fm.diag(data.VarName, "%v is readonly", varName)
+			// Assigning to a readonly error is a fatal error according to
+			// POSIX.
+			return StatusAssignmentError, false
+		}
 		status, ok, breaking := fm.runLoopBody(data.Body)
 		if breaking {
 			return 0, true
@@ -806,7 +852,7 @@ var (
 
 func (fm *frame) home(n parse.Node, uname string) (string, bool) {
 	if uname == "" {
-		if home, set := fm.variables["HOME"]; set {
+		if home, set := fm.variables.values["HOME"]; set {
 			return home, true
 		}
 	}
@@ -959,8 +1005,8 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 		}
 	} else {
 		// Normal variable, like $foo.
-		value, set := fm.variables[name]
-		info = scalarVarInfo(value, set, true)
+		variable, set := fm.variables.values[name]
+		info = scalarVarInfo(variable, set, true)
 	}
 
 	if v.LengthOp {
@@ -1062,7 +1108,11 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 			}
 			if assignIfUse {
 				if info.normal {
-					fm.variables[v.Name] = arg.expandOneString()
+					canSet := fm.variables.Set(v.Name, arg.expandOneString())
+					if !canSet {
+						fm.diag(v, "%v is readonly", v.Name)
+						return nil, false
+					}
 				} else {
 					fm.diag(v, "cannot assign to $%v", v.Name)
 					return nil, false
@@ -1123,7 +1173,7 @@ func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
 }
 
 func (fm *frame) ifs() string {
-	ifs, set := fm.variables["IFS"]
+	ifs, set := fm.variables.values["IFS"]
 	if !set {
 		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
 		return " \t\n"

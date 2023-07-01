@@ -17,206 +17,36 @@ import (
 // see the code that uses this map.
 var specialBuiltins = map[string]func(*frame, []string) (int, bool){
 	"break":    breakCmd,
-	":":        colon,
+	":":        colonCmd,
 	"continue": continueCmd,
 	// "." and "eval" are set in init
-	"exec":     exec,
-	"exit":     exit,
-	"export":   export,
-	"readonly": readonly,
+	"exec":     execCmd,
+	"exit":     exitCmd,
+	"export":   exportCmd,
+	"readonly": readonlyCmd,
 	"return":   returnCmd,
-	"set":      set,
-	"shift":    shift,
-	"times":    times,
-	"trap":     trap,
-	"unset":    unset,
+	"set":      setCmd,
+	"shift":    shiftCmd,
+	"times":    timesCmd,
+	"trap":     trapCmd,
+	"unset":    unsetCmd,
 }
 
 func init() {
 	// Some special builtins refer to methods that depend on specialBuiltins, so
 	// initialize them here to avoid dependency cycle.
-	specialBuiltins["."] = dot
-	specialBuiltins["eval"] = eval
+	specialBuiltins["."] = dotCmd
+	specialBuiltins["eval"] = evalCmd
 }
 
 func breakCmd(fm *frame, args []string) (int, bool) {
-	return abortLoop(fm, args, false)
+	return breakOrContinue(fm, args, false)
 }
-
-func colon(*frame, []string) (int, bool) {
-	return 0, true
-}
-
-func continueCmd(fm *frame, args []string) (int, bool) {
-	return abortLoop(fm, args, true)
-}
-
-func dot(fm *frame, args []string) (int, bool) {
-	if len(args) == 0 {
-		fm.badCommandLine(". requires at least one argument")
-		return StatusBadCommandLine, false
-	}
-	path, ok, _ := fm.lookPath(args[0], 0)
-	if !ok {
-		// TODO: Add range information.
-		fmt.Fprintf(fm.diagFile, "not found: %v\n", args[0])
-		return StatusFileToSourceNotFound, false
-	}
-	bs, err := os.ReadFile(path)
-	if err != nil {
-		// TODO: Add range information.
-		fmt.Fprintf(fm.diagFile, "cannot read %v: %v\n", args[0], err)
-		return StatusFileToSourceNotReadable, false
-	}
-	code := string(bs)
-	n, err := parse.Parse(code)
-	if err != nil {
-		// TODO: Add range information.
-		fmt.Fprintln(fm.diagFile, "syntax error:", err)
-		return StatusSyntaxError, false
-	}
-	// A file sourced by "." can use the return command, like in a function
-	// call. All of bash, ksh and zsh (but not dash) extend this similarity
-	// further by setting the positional arguments within the execution. This is
-	// not specified by POSIX, but we do that too.
-	return fm.callFuncLike(args[1:], func() (int, bool) {
-		return fm.chunk(n)
-	})
-}
-
-func eval(fm *frame, args []string) (int, bool) {
-	code := strings.Join(args, " ")
-	if strings.Trim(code, " \t\n") == "" {
-		return 0, true
-	}
-	n, err := parse.Parse(code)
-	if err != nil {
-		// TODO: Add range information.
-		fmt.Fprintln(fm.diagFile, "syntax error:", err)
-		return StatusSyntaxError, false
-	}
-	return fm.chunk(n)
-}
-
-func exec(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
-}
-
-func exit(fm *frame, args []string) (int, bool) {
-	// POSIX doesn't specify the status should be when exit is called without an
-	// argument, but all of dash, bash, ksh and zsh use $?; we follow this
-	// behavior.
-	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
-	if !ok {
-		return StatusBadCommandLine, false
-	}
-	return status, false
-}
-
-func export(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
-}
-
-func readonly(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
-}
-
-func returnCmd(fm *frame, args []string) (int, bool) {
-	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
-	if !ok {
-		return StatusBadCommandLine, false
-	}
-	if status < 0 {
-		fm.badCommandLine("argument must be non-negative, got %v", status)
-		return StatusBadCommandLine, false
-	}
-	fm.fnAbort = true
-	return status, false
-}
-
-// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#set
-func set(fm *frame, args []string) (int, bool) {
-	// TODO: Support outputting parameters.
-	// TODO: Support setting options.
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
-	}
-	fm.arguments = append([]string{fm.arguments[0]}, args...)
-	return 0, true
-}
-
-func shift(fm *frame, args []string) (int, bool) {
-	n, ok := parseOneInt(fm, args, 1)
-	if !ok {
-		return StatusBadCommandLine, false
-	}
-	if n > len(fm.arguments)-1 {
-		fm.badCommandLine("argument to shift must not be larger than $#")
-		return StatusBadCommandLine, false
-	}
-	copy(fm.arguments[1:], fm.arguments[1+n:])
-	fm.arguments = fm.arguments[:len(fm.arguments)-n]
-	return 0, true
-}
-
-func times(fm *frame, args []string) (int, bool) {
-	if len(args) != 0 {
-		fm.badCommandLine("the times command accepts no arguments")
-		return StatusBadCommandLine, false
-	}
-	// [unix.Times] is not defined for darwin; use the newer [unix.Getrusage]
-	// instead.
-	print := func(who int) {
-		var rusage unix.Rusage
-		err := unix.Getrusage(who, &rusage)
-		if err != nil {
-			fmt.Fprintln(fm.files[1], "?m?s ?m?s")
-		} else {
-			fmt.Fprintln(fm.files[1],
-				formatTimevalForTimes(rusage.Utime), formatTimevalForTimes(rusage.Stime))
-		}
-	}
-	print(unix.RUSAGE_SELF)
-	print(unix.RUSAGE_CHILDREN)
-	return 0, true
-}
-
-func trap(*frame, []string) (int, bool) {
-	// TODO
-	return 0, true
-}
-
-func unset(fm *frame, args []string) (int, bool) {
-	opts, args, ok := fm.getopt(args, "fv")
-	if !ok {
-		return StatusBadCommandLine, false
-	}
-	if opts.isSet('f') && opts.isSet('v') {
-		fm.badCommandLine("-f and -v are mutually exclusive")
-		return StatusBadCommandLine, false
-	}
-	if opts.isSet('f') {
-		for _, name := range args {
-			delete(fm.functions, name)
-		}
-	} else {
-		// When neither -f and -v is specified, default to variable
-		for _, name := range args {
-			delete(fm.variables, name)
-		}
-	}
-	return 0, true
-}
-
-// Utilities used for implementing special builtins.
 
 // Implements break and continue. This works by returning (0, false) after
 // setting fm.loopAbort, which is examined in the implementation of
 // for/while/until.
-func abortLoop(fm *frame, args []string, next bool) (int, bool) {
+func breakOrContinue(fm *frame, args []string, next bool) (int, bool) {
 	level, ok := parseOneInt(fm, args, 1)
 	if !ok {
 		return StatusBadCommandLine, false
@@ -244,6 +74,209 @@ func abortLoop(fm *frame, args []string, next bool) (int, bool) {
 	return 0, false
 }
 
+func colonCmd(*frame, []string) (int, bool) {
+	return 0, true
+}
+
+func continueCmd(fm *frame, args []string) (int, bool) {
+	return breakOrContinue(fm, args, true)
+}
+
+func dotCmd(fm *frame, args []string) (int, bool) {
+	if len(args) == 0 {
+		fm.badCommandLine(". requires at least one argument")
+		return StatusBadCommandLine, false
+	}
+	path, ok, _ := fm.lookPath(args[0], 0)
+	if !ok {
+		fm.diagSpecialCommand("not found: %v\n", args[0])
+		return StatusFileToSourceNotFound, false
+	}
+	bs, err := os.ReadFile(path)
+	if err != nil {
+		fm.diagSpecialCommand("cannot read %v: %v\n", args[0], err)
+		return StatusFileToSourceNotReadable, false
+	}
+	code := string(bs)
+	n, err := parse.Parse(code)
+	if err != nil {
+		fm.diagSpecialCommand("syntax error:", err)
+		return StatusSyntaxError, false
+	}
+	// A file sourced by "." can use the return command, like in a function
+	// call. All of bash, ksh and zsh (but not dash) extend this similarity
+	// further by setting the positional arguments within the execution. This is
+	// not specified by POSIX, but we do that too.
+	return fm.callFuncLike(args[1:], func() (int, bool) {
+		return fm.chunk(n)
+	})
+}
+
+func evalCmd(fm *frame, args []string) (int, bool) {
+	code := strings.Join(args, " ")
+	if strings.Trim(code, " \t\n") == "" {
+		return 0, true
+	}
+	n, err := parse.Parse(code)
+	if err != nil {
+		fm.diagSpecialCommand("syntax error:", err)
+		return StatusSyntaxError, false
+	}
+	return fm.chunk(n)
+}
+
+func execCmd(*frame, []string) (int, bool) {
+	// TODO
+	return 0, true
+}
+
+func exitCmd(fm *frame, args []string) (int, bool) {
+	// POSIX doesn't specify the status should be when exit is called without an
+	// argument, but all of dash, bash, ksh and zsh use $?; we follow this
+	// behavior.
+	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	return status, false
+}
+
+func exportCmd(fm *frame, args []string) (int, bool) {
+	return exportOrReadonly(fm, args, "export", fm.variables.exported)
+}
+
+func exportOrReadonly(fm *frame, args []string, cmd string, varSet set[string]) (int, bool) {
+	// POSIX leaves the behavior of export and readonly unspecified when given
+	// no argument, or when both -p and arguments are given. We follow the
+	// behavior of dash here: parse the options, and print exported/readonly
+	// variables if there are no arguments. This means that -p is actually an
+	// no-op.
+	_, args, ok := fm.getopt(args, "p")
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if len(args) == 0 {
+		for name := range varSet {
+			value, set := fm.variables.values[name]
+			if set {
+				fmt.Fprintf(fm.files[1], "%v %v=%v\n", cmd, name, quote(value))
+			} else {
+				fmt.Fprintf(fm.files[1], "%v %v\n", cmd, name)
+			}
+		}
+		return 0, true
+	}
+	for _, arg := range args {
+		name, value, hasValue := strings.Cut(arg, "=")
+		// Try to set the variable before adding it to the set. This order is
+		// important in readonly; if we add it to the readonly set first, the
+		// assignment will always fail.
+		if hasValue {
+			canSet := fm.variables.Set(name, value)
+			if !canSet {
+				fm.diagSpecialCommand("%v is readonly\n", name)
+				return StatusAssignmentError, false
+			}
+		}
+		varSet.add(name)
+	}
+	return 0, true
+}
+
+func readonlyCmd(fm *frame, args []string) (int, bool) {
+	return exportOrReadonly(fm, args, "readonly", fm.variables.readonly)
+}
+
+func returnCmd(fm *frame, args []string) (int, bool) {
+	status, ok := parseOneInt(fm, args, fm.lastPipelineStatus)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if status < 0 {
+		fm.badCommandLine("argument must be non-negative, got %v", status)
+		return StatusBadCommandLine, false
+	}
+	fm.fnAbort = true
+	return status, false
+}
+
+// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#setCmd
+func setCmd(fm *frame, args []string) (int, bool) {
+	// TODO: Support outputting parameters.
+	// TODO: Support setting options.
+	if len(args) > 0 && args[0] == "--" {
+		args = args[1:]
+	}
+	fm.arguments = append([]string{fm.arguments[0]}, args...)
+	return 0, true
+}
+
+func shiftCmd(fm *frame, args []string) (int, bool) {
+	n, ok := parseOneInt(fm, args, 1)
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if n > len(fm.arguments)-1 {
+		fm.badCommandLine("argument to shift must not be larger than $#")
+		return StatusBadCommandLine, false
+	}
+	copy(fm.arguments[1:], fm.arguments[1+n:])
+	fm.arguments = fm.arguments[:len(fm.arguments)-n]
+	return 0, true
+}
+
+func timesCmd(fm *frame, args []string) (int, bool) {
+	if len(args) != 0 {
+		fm.badCommandLine("the times command accepts no arguments")
+		return StatusBadCommandLine, false
+	}
+	// [unix.Times] is not defined for darwin; use the newer [unix.Getrusage]
+	// instead.
+	print := func(who int) {
+		var rusage unix.Rusage
+		err := unix.Getrusage(who, &rusage)
+		if err != nil {
+			fmt.Fprintln(fm.files[1], "?m?s ?m?s")
+		} else {
+			fmt.Fprintln(fm.files[1],
+				formatTimevalForTimes(rusage.Utime), formatTimevalForTimes(rusage.Stime))
+		}
+	}
+	print(unix.RUSAGE_SELF)
+	print(unix.RUSAGE_CHILDREN)
+	return 0, true
+}
+
+func trapCmd(*frame, []string) (int, bool) {
+	// TODO
+	return 0, true
+}
+
+func unsetCmd(fm *frame, args []string) (int, bool) {
+	opts, args, ok := fm.getopt(args, "fv")
+	if !ok {
+		return StatusBadCommandLine, false
+	}
+	if opts.isSet('f') && opts.isSet('v') {
+		fm.badCommandLine("-f and -v are mutually exclusive")
+		return StatusBadCommandLine, false
+	}
+	if opts.isSet('f') {
+		for _, name := range args {
+			delete(fm.functions, name)
+		}
+	} else {
+		// This branch handles either explicit -v or no option. In both cases,
+		// unset variables.
+		for _, name := range args {
+			delete(fm.variables.values, name)
+		}
+	}
+	return 0, true
+}
+
+// Utilities used for implementing special builtins.
+
 func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 	switch len(args) {
 	case 0:
@@ -261,7 +294,34 @@ func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 	}
 }
 
+// The same as parse.normalBarewordStopper.
+const nonBareword = "\r\n;)}&| \t<>(\\'\"$`"
+
+func quote(s string) string {
+	if !strings.ContainsAny(s, nonBareword) {
+		return s
+	}
+	// Single-quote the value.
+	s1 := strings.TrimLeft(s, "'")
+	leadingQuotes := len(s) - len(s1)
+	s2 := strings.TrimRight(s1, "'")
+	trailingQuotes := len(s1) - len(s2)
+	return strings.Repeat(`\'`, leadingQuotes) +
+		"'" + strings.ReplaceAll(s2, "'", `'\''`) + "'" +
+		strings.Repeat(`\'`, trailingQuotes)
+}
+
 func formatTimevalForTimes(t unix.Timeval) string {
 	return fmt.Sprintf("%dm%fs",
 		t.Sec/60, float64(t.Sec%60)+float64(t.Usec)/1e6)
+}
+
+func (fm *frame) diagSpecialCommand(format string, args ...any) {
+	// TODO: Incorporate range information.
+	fmt.Fprintf(fm.diagFile, format+"\n", args...)
+}
+
+func (fm *frame) badCommandLine(format string, args ...any) {
+	// TODO: Incorporate range information.
+	fmt.Fprintf(fm.diagFile, "bad command line option: "+format+"\n", args...)
 }

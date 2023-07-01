@@ -17,6 +17,10 @@ const (
 	StatusSyntaxError = 2
 	// Same as dash; bash, ksh and zsh use 1. Tested with:
 	//
+	//     $sh -c 'readonly x=foo; x=bar'
+	StatusAssignmentError = 2
+	// Same as dash; bash, ksh and zsh use 1. Tested with:
+	//
 	//     $sh -c 'echo $((1//2))'
 	StatusExpansionError = 2
 	// Same as dash; bash, ksh and zsh use 1. Tested with:

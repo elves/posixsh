@@ -6,7 +6,16 @@ import (
 	"strings"
 )
 
-func Eval(s string, variables map[string]string) (int64, error) {
+type Variables interface {
+	Get(name string) string
+	Set(name, value string) bool
+}
+
+type SetError struct{ Name string }
+
+func (err SetError) Error() string { return "cannot set " + err.Name }
+
+func Eval(s string, variables Variables) (int64, error) {
 	tokens, starts := lex(s)
 	p := parser{0, tokens, starts, s, variables, true}
 	result, err := p.top()
@@ -22,7 +31,7 @@ type parser struct {
 	tokens     []string
 	starts     []int
 	original   string
-	variables  map[string]string
+	variables  Variables
 	sideEffect bool
 }
 
@@ -102,7 +111,10 @@ func (p *parser) assign() (int64, error) {
 			}
 			result = binaryOps[op](current, rhs)
 		}
-		p.variables[name] = strconv.FormatInt(result, 10)
+		ok := p.variables.Set(name, strconv.FormatInt(result, 10))
+		if !ok {
+			return 0, SetError{name}
+		}
 		return result, nil
 	}
 	return p.condition()
@@ -280,16 +292,19 @@ func (p *parser) primary() (int64, error) {
 			return 0, err
 		}
 		newVal := oldVal + int64(preInc+postInc-preDec-postDec)
-		p.variables[name] = strconv.FormatInt(newVal, 10)
+		ok := p.variables.Set(name, strconv.FormatInt(newVal, 10))
+		if !ok {
+			return 0, SetError{name}
+		}
 		// The value of an expression with both prefix increment/decrement
 		// operators and postfix increment/decrement operators is not
 		// well-defined. We use a simple rule: if there is any prefix operator,
 		// the value is the new value of the variable; otherwise it's the old
 		// value of the variable.
 		if preInc > 0 || preDec > 0 {
-			return newVal, nil
+			return newVal, err
 		}
-		return oldVal, nil
+		return oldVal, err
 	} else {
 		return 0, p.errorf("can't parse a primary expression from %q", p.rest())
 	}
@@ -309,7 +324,7 @@ func (p *parser) parseIncDec() (inc, dec int) {
 }
 
 func (p *parser) getVar(name string) (int64, error) {
-	value := p.variables[name]
+	value := p.variables.Get(name)
 	if value == "" {
 		// Not defined in POSIX, but all of dash, bash and zsh treat unset
 		// and empty variables as 0.
