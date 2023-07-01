@@ -1101,8 +1101,7 @@ func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	case "?":
 		return strconv.Itoa(fm.lastPipelineStatus), true, true
 	case "-":
-		// TODO
-		return "", true, true
+		return fm.options.dash(), true, true
 	case "$":
 		return strconv.Itoa(os.Getpid()), true, true
 	case "!":

@@ -37,6 +37,8 @@ var optionByLetter = map[byte]options{
 	'x': xtrace,
 }
 
+const optionLetters = "abCefmnuvx"
+
 var optionByName = map[string]options{
 	"allexport": allexport,
 	"errexit":   errexit,
@@ -86,6 +88,17 @@ func (o options) format(asCommands bool) string {
 			}
 		}
 		fmt.Fprintf(&sb, format, name)
+	}
+	return sb.String()
+}
+
+// Returns a value for $-.
+func (o options) dash() string {
+	var sb strings.Builder
+	for _, letter := range []byte(optionLetters) {
+		if o.has(optionByLetter[letter]) {
+			sb.WriteByte(letter)
+		}
 	}
 	return sb.String()
 }

@@ -1,5 +1,7 @@
 package eval
 
+import "sort"
+
 func each[X any, Y any](f func(X) Y, xs []X) []Y {
 	ys := make([]Y, len(xs))
 	for i, x := range xs {
@@ -27,4 +29,13 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 		mm[k] = v
 	}
 	return mm
+}
+
+func sortedNames[V any](m map[string]V) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }

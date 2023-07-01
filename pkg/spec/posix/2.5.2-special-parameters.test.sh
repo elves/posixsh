@@ -76,7 +76,12 @@ echo $?
 0
 ## END
 
-# TODO: Test $-
+#### Special parameter $-
+set +eC
+echo $-
+set -eC
+echo $-
+## stdout-regexp: [^eC]*\n.*(e.*C|C.*e).*
 
 #### Special parameter $0
 echo $0

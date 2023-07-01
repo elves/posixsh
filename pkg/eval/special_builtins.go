@@ -3,7 +3,6 @@ package eval
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -360,15 +359,6 @@ func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 
 // The same as parse.normalBarewordStopper.
 const nonBareword = "\r\n;)}&| \t<>(\\'\"$`"
-
-func sortedNames[V any](m map[string]V) []string {
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
 
 func quote(s string) string {
 	if !strings.ContainsAny(s, nonBareword) {
