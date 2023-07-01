@@ -178,3 +178,37 @@ echo "${x#*p}"
 x='pa apa ap'
 echo "${x##*p}"
 ## stdout:
+
+#### Using unset variable when nounset is in effect is fatal error
+set -o nounset
+echo $x
+echo should not get here
+## status: [1, 127]
+## stderr-regexp: .+
+
+#### Using unset positional parameter when nounset is in effect is fatal error
+set -o nounset
+echo $1
+echo should not get here
+## argv-json: ["/bin/sh"]
+## status: [1, 127]
+## stderr-regexp: .+
+
+#### Using length operator on unset parameter when nounset is in effect is fatal error
+set -o nounset
+echo ${#x}
+echo should not get here
+## status: [1, 127]
+## stderr-regexp: .+
+
+#### Using trimming operator on unset parameter when nounset is in effect is fatal error
+set -o nounset
+echo ${x%foo}
+echo should not get here
+## status: [1, 127]
+## stderr-regexp: .+
+
+#### Using substitution operator on unset parameter when nounset is in effect is OK
+set -o nounset
+echo ${x-default}
+## stdout: default

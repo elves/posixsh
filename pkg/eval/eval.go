@@ -975,6 +975,11 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 		info = scalarVarInfo(variable, set, true)
 	}
 
+	if !info.set && fm.options.has(nounset) && !hasSubstitutionOp(v) {
+		fm.diag(v, "parameter %v is unset", name)
+		return nil, false
+	}
+
 	if v.LengthOp {
 		var n int
 		if info.scalar {
@@ -1120,6 +1125,17 @@ func (fm *frame) specialScalarVar(name string) (value string, set, ok bool) {
 	default:
 		return "", false, false
 	}
+}
+
+func hasSubstitutionOp(v *parse.Variable) bool {
+	if v.Modifier == nil {
+		return false
+	}
+	switch v.Modifier.Operator {
+	case "-", ":-", "=", ":=", "+", ":+", "?", ":?":
+		return true
+	}
+	return false
 }
 
 func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
