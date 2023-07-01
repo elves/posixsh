@@ -44,7 +44,7 @@ echo should not get here
 ## stdout-json: ""
 ## stderr-regexp: .+
 
-#### Variable assignment error in ${name:=value} expression is fatal
+#### Variable assignment error in ${name=value} expression is fatal
 readonly x
 : ${x=value}
 echo should not get here

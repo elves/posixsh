@@ -140,7 +140,7 @@ func testOutput(t *testing.T, what, got string, wants []regexpOrString) {
 		return
 	}
 	if !matchAny(got, wants, regexpOrString.match) {
-		t.Errorf("got %v %q, want any of %v choices", what, got, len(wants))
+		t.Errorf("%v doesn't match any of %v choices", what, len(wants))
 		for i, want := range wants {
 			if want.re != nil {
 				t.Errorf("#%d: string matching regexp %q", i, want.re.String())
