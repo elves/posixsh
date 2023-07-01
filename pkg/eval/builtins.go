@@ -4,88 +4,192 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 var builtins = map[string]func(*frame, []string) int{
-	"alias":   alias,
-	"bg":      bg,
-	"cd":      cd,
+	"alias":   aliasCmd,
+	"bg":      bgCmd,
+	"cd":      cdCmd,
 	"false":   falseCmd,
-	"fc":      fc,
-	"fg":      fg,
-	"getopts": getopts,
-	"hash":    hash,
-	"jobs":    jobs,
-	"kill":    kill,
-	"newgrp":  newgrp,
-	"pwd":     pwd,
-	"read":    read,
+	"fc":      fcCmd,
+	"fg":      fgCmd,
+	"getopts": getoptsCmd,
+	"hash":    hashCmd,
+	"jobs":    jobsCmd,
+	"kill":    killCmd,
+	"newgrp":  newgrpCmd,
+	"pwd":     pwdCmd,
+	"read":    readCmd,
 	"true":    trueCmd,
 	"type":    typeCmd,
-	"ulimit":  ulimit,
-	"umask":   umask,
-	"unalias": unalias,
-	"wait":    wait,
+	"ulimit":  ulimitCmd,
+	"umask":   umaskCmd,
+	"unalias": unaliasCmd,
+	"wait":    waitCmd,
 }
 
-func alias(fm *frame, args []string) int {
+func aliasCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func bg(fm *frame, args []string) int {
+func bgCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func cd(fm *frame, args []string) int {
-	// TODO
+const pathSep = string(filepath.Separator)
+
+func cdCmd(fm *frame, args []string) int {
+	opts, args, err := getopts(args, "LP")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	if len(args) == 0 {
+		return cdInner(fm, fm.GetVar("HOME"))
+	} else if len(args) > 1 {
+		fm.badCommandLine("cd accepts at most one argument")
+		return StatusBadCommandLine
+	}
+
+	logical := true
+	// POSIX requires that the option that appears later take precedence.
+	for _, opt := range opts {
+		logical = opt.name == 'L'
+	}
+	newWd := args[0]
+	if newWd == "-" {
+		status := cdInner(fm, fm.GetVar("OLDPWD"))
+		if status == 0 {
+			fmt.Fprintln(fm.files[1], fm.wd)
+		}
+		return status
+	}
+	if !filepath.IsAbs(newWd) {
+		if first, _, _ := strings.Cut(newWd, "/"); first != "." && first != ".." {
+			for _, cdpath := range filepath.SplitList(fm.GetVar("CDPATH")) {
+				// See if we can change to cdpath + newWd. This duplicates some
+				// code from below.
+				tryWd := cdpath + string(filepath.Separator) + newWd
+				if !filepath.IsAbs(tryWd) {
+					tryWd = fm.wd + pathSep + tryWd
+				}
+				if logical {
+					tryWd = filepath.Clean(tryWd)
+				}
+				if info, err := os.Stat(tryWd); err == nil && info.IsDir() {
+					return cdNoCheck(fm, tryWd)
+				}
+			}
+		}
+		// Don't use [filepath.Join] as it always calls [filepath.Clean]. The
+		// path will eventually be cleaned by [filepath.EvalSymlinks].
+		newWd = fm.wd + pathSep + newWd
+	}
+	if logical {
+		newWd = filepath.Clean(newWd)
+	}
+	return cdInner(fm, newWd)
+}
+
+func cdInner(fm *frame, newWd string) int {
+	info, err := os.Stat(newWd)
+	if err != nil {
+		fmt.Fprintf(fm.files[2], "cannot cd to %v: %v", newWd, err)
+		return 2
+	}
+	if !info.IsDir() {
+		fmt.Fprintf(fm.files[2], "cannot cd to %v as it is not a directory", newWd)
+		return 2
+	}
+	return cdNoCheck(fm, newWd)
+}
+
+func cdNoCheck(fm *frame, newWd string) int {
+	newWd, err := filepath.EvalSymlinks(newWd)
+	if err != nil {
+		fmt.Fprintf(fm.files[2], "cannot cd to %v: %v", newWd, err)
+		return 2
+	}
+	// POSIX doesn't specify whether cd should respect the readonly attribute of
+	// $OLDPWD and $PWD; bash, dash and zsh do, ksh doesn't. We follow ksh.
+	fm.variables.values["OLDPWD"] = fm.GetVar("PWD")
+	fm.variables.values["PWD"] = newWd
+	fm.wd = newWd
 	return 0
 }
 
 func falseCmd(*frame, []string) int { return 1 }
 
-func fc(fm *frame, args []string) int {
+func fcCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func fg(fm *frame, args []string) int {
+func fgCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func getopts(fm *frame, args []string) int {
+func getoptsCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func hash(fm *frame, args []string) int {
+func hashCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func jobs(fm *frame, args []string) int {
+func jobsCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func kill(fm *frame, args []string) int {
+func killCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func newgrp(fm *frame, args []string) int {
+func newgrpCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func pwd(fm *frame, args []string) int {
-	// TODO
+func pwdCmd(fm *frame, args []string) int {
+	opts, args, err := getopts(args, "LP")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	if len(args) > 0 {
+		fm.badCommandLine("pwd doesn't accept arguments")
+		return StatusBadCommandLine
+	}
+	logical := true
+	// POSIX requires that the option that appears later take precedence.
+	for _, opt := range opts {
+		logical = opt.name == 'L'
+	}
+
+	if logical {
+		fmt.Fprintln(fm.files[1], fm.wd)
+	} else {
+		wd, err := filepath.EvalSymlinks(fm.wd)
+		if err != nil {
+			fm.badCommandLine("cannot resolve working directory: %v", err)
+			return 2
+		}
+		fmt.Fprintln(fm.files[1], wd)
+	}
 	return 0
 }
 
-func read(fm *frame, args []string) int {
+func readCmd(fm *frame, args []string) int {
 	line := getLine(fm.files[0])
 	varName := "REPLY"
 	if len(args) > 0 {
@@ -120,22 +224,22 @@ func typeCmd(fm *frame, args []string) int {
 	return 0
 }
 
-func ulimit(fm *frame, args []string) int {
+func ulimitCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func umask(fm *frame, args []string) int {
+func umaskCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func unalias(fm *frame, args []string) int {
+func unaliasCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }
 
-func wait(fm *frame, args []string) int {
+func waitCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }

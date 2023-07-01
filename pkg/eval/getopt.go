@@ -4,17 +4,31 @@ import (
 	"src.elv.sh/pkg/getopt"
 )
 
-type parsedOpts map[byte]string
+type parsedOpt struct {
+	name  byte
+	value string
+}
 
-func (p parsedOpts) isSet(b byte) bool {
-	_, ok := p[b]
-	return ok
+type parsedOpts []parsedOpt
+
+func (p parsedOpts) get(name byte) (string, bool) {
+	for _, o := range p {
+		if o.name == name {
+			return o.value, true
+		}
+	}
+	return "", false
+}
+
+func (p parsedOpts) has(name byte) bool {
+	_, exists := p.get(name)
+	return exists
 }
 
 // A wrapper around [getopt.Parse], optimized for use cases that only need short
 // options, which is the case for all the shell builtins standardized by POSIX.
 // The API mimics the C function with the same name.
-func (fm *frame) getopt(args []string, optstring string) (parsedOpts, []string, bool) {
+func getopts(args []string, optstring string) (parsedOpts, []string, error) {
 	var specs []*getopt.OptionSpec
 	for i := 0; i < len(optstring); i++ {
 		spec := &getopt.OptionSpec{Short: rune(optstring[i])}
@@ -34,12 +48,11 @@ func (fm *frame) getopt(args []string, optstring string) (parsedOpts, []string, 
 	// style. We follow the advice of POSIX as well as the majority.
 	opts, args, err := getopt.Parse(args, specs, getopt.BSD)
 	if err != nil {
-		fm.badCommandLine("%v", err)
-		return parsedOpts{}, nil, false
+		return nil, nil, err
 	}
 	parsed := make(parsedOpts, len(opts))
-	for _, opt := range opts {
-		parsed[byte(opt.Spec.Short)] = opt.Argument
+	for i, opt := range opts {
+		parsed[i] = parsedOpt{byte(opt.Spec.Short), opt.Argument}
 	}
-	return parsed, args, true
+	return parsed, args, nil
 }

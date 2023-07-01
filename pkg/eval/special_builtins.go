@@ -151,8 +151,9 @@ func exportOrReadonly(fm *frame, args []string, cmd string, varSet set[string]) 
 	// behavior of dash here: parse the options, and print exported/readonly
 	// variables if there are no arguments. This means that -p is actually an
 	// no-op.
-	_, args, ok := fm.getopt(args, "p")
-	if !ok {
+	_, args, err := getopts(args, "p")
+	if err != nil {
+		fm.badCommandLine("%v", err)
 		return StatusBadCommandLine, false
 	}
 	if len(args) == 0 {
@@ -316,15 +317,17 @@ func trapCmd(*frame, []string) (int, bool) {
 }
 
 func unsetCmd(fm *frame, args []string) (int, bool) {
-	opts, args, ok := fm.getopt(args, "fv")
-	if !ok {
+	opts, args, err := getopts(args, "fv")
+	if err != nil {
+		fm.badCommandLine("%v", err)
 		return StatusBadCommandLine, false
 	}
-	if opts.isSet('f') && opts.isSet('v') {
+	f, v := opts.has('f'), opts.has('v')
+	if f && v {
 		fm.badCommandLine("-f and -v are mutually exclusive")
 		return StatusBadCommandLine, false
 	}
-	if opts.isSet('f') {
+	if f {
 		for _, name := range args {
 			delete(fm.functions, name)
 		}

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"os/user"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -57,7 +58,14 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, 0, nil, 0, false}
+	wd, err := os.Getwd()
+	if err != nil {
+		wd = "/"
+	}
+	ev.variables.values["PWD"] = wd
+	return &frame{
+		ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], wd,
+		0, 0, 0, 0, nil, 0, false}
 }
 
 type frame struct {
@@ -70,7 +78,10 @@ type frame struct {
 	// diagnostic message to the stderr, ignoring all active redirections. We
 	// save the initial stderr (files[2]) in this field for that purpose.
 	diagFile *os.File
-	options  options
+	// Virtualized working directory. Necessary to emulate subshells.
+	wd string
+	// Shell options.
+	options options
 	// Used for $?.
 	lastPipelineStatus int
 	// Used as the status of simple commands with only assignments.
@@ -114,6 +125,7 @@ func (fm *frame) cloneForSubshell() *frame {
 		cloneMap(fm.functions),
 		cloneSlice(fm.files),
 		fm.diagFile,
+		fm.wd,
 		fm.options,
 		// POSIX doesn't explicitly specify whether subshells inherit $?, but
 		// all of dash, bash, ksh and zsh let subshells inherit $?, so we follow
@@ -524,19 +536,14 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 }
 
 func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
-	// TODO: Don't use os.Getwd; virtualize working directory per frame.
-	wd, err := os.Getwd()
-	if err != nil {
-		wd = "/"
-	}
-	return lookPath(name, wd, fm.GetVar("PATH"), perm)
+	return lookPath(name, fm.wd, fm.GetVar("PATH"), perm)
 }
 
 func (fm *frame) startProcess(words []string) (*os.Process, error) {
 	return os.StartProcess(words[0], words, &os.ProcAttr{
+		Dir:   fm.wd,
+		Env:   fm.variables.serializeEnvEntries(),
 		Files: fm.files,
-		// TODO: Only serialize exported variables.
-		Env: fm.variables.serializeEnvEntries(),
 	})
 }
 
@@ -785,6 +792,10 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 				return StatusRedirectionError, true, nil
 			}
 		} else {
+			// Use virtual working directory as the base for relative paths.
+			if !filepath.IsAbs(right) {
+				right = filepath.Join(fm.wd, right)
+			}
 			f, err := os.OpenFile(right, flag, 0644)
 			if err != nil {
 				fm.diag(rd, "can't open redirection source: %v", err)
