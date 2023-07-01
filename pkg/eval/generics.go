@@ -16,3 +16,15 @@ func (s set[T]) has(v T) bool {
 	_, ok := s[v]
 	return ok
 }
+
+func cloneSlice[T any](s []T) []T {
+	return append([]T(nil), s...)
+}
+
+func cloneMap[K comparable, V any](m map[K]V) map[K]V {
+	mm := make(map[K]V, len(m))
+	for k, v := range m {
+		mm[k] = v
+	}
+	return mm
+}

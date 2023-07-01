@@ -1,1 +1,2 @@
-# TODO: Add tests when the effects of the options are implemented.
+# Effect of various options are tested in their respective files, like
+# set-allexport.test.sh

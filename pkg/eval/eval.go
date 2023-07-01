@@ -24,26 +24,6 @@ type Evaler struct {
 	files     []*os.File
 }
 
-type variables struct {
-	values map[string]string
-	// Whether a variable is exported or readonly are independent of whether it
-	// is set, so we keep those attributes in separate maps.
-	exported set[string]
-	readonly set[string]
-}
-
-func (v variables) Get(name string) string {
-	return v.values[name]
-}
-
-func (v variables) Set(name, value string) bool {
-	if v.readonly.has(name) {
-		return false
-	}
-	v.values[name] = value
-	return true
-}
-
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
 
 func NewEvaler(args []string, files []*os.File) *Evaler {
@@ -59,41 +39,6 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 		make(map[string]*parse.Command),
 		files,
 	}
-}
-
-// TODO: Consider storing environment within a frame as a slice of name=value to
-// avoid the conversion overhead.
-
-func initVariablesFromEnv(entries []string) variables {
-	v := variables{
-		values:   make(map[string]string, len(entries)),
-		exported: make(set[string], len(entries)),
-		readonly: make(set[string]),
-	}
-	for _, entry := range entries {
-		// Note: Treat "foo" like "foo=" if such entries ever occur.
-		name, value, _ := strings.Cut(entry, "=")
-		v.values[name] = value
-		v.exported.add(name)
-	}
-	wd, err := os.Getwd()
-	if err == nil {
-		v.values["PWD"] = wd
-		v.exported.add("PWD")
-	}
-	return v
-}
-
-func serializeEnvEntries(v variables) []string {
-	entries := make([]string, 0, len(v.exported))
-	for name := range v.exported {
-		if value, ok := v.values[name]; ok {
-			// Only variables that are both set and exported are exported to the
-			// environment of child processes.
-			entries = append(entries, name+"="+value)
-		}
-	}
-	return entries
 }
 
 func (ev *Evaler) Eval(code string) int {
@@ -165,7 +110,7 @@ func (fm *frame) cloneForSubshell() *frame {
 	// TODO: Optimize with copy on write
 	return &frame{
 		cloneSlice(fm.arguments),
-		variables{cloneMap(fm.variables.values), cloneMap(fm.variables.exported), cloneMap(fm.variables.readonly)},
+		fm.variables.clone(),
 		cloneMap(fm.functions),
 		cloneSlice(fm.files),
 		fm.diagFile,
@@ -449,6 +394,7 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		name := assign.LHS
 		if !permAssign {
 			value, isSet := fm.variables.values[name]
+			exported := fm.variables.exported.has(name)
 			if !isSet {
 				defer delete(fm.variables.values, name)
 			} else {
@@ -456,9 +402,17 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 					fm.variables.values[name] = value
 				}()
 			}
+			// When the allexport option is active, setting a variable will also
+			// export it, so undo it.
+			//
+			// TODO: if we are calling a function that explicitly exports the
+			// variable, it should not be undone.
+			if !exported {
+				defer delete(fm.variables.exported, name)
+			}
 		}
 		// We have already checked that all variables are not readonly.
-		fm.variables.values[name] = exp.expandOneString()
+		fm.SetVar(name, exp.expandOneString())
 	}
 
 	if len(words) == 0 {
@@ -536,14 +490,14 @@ func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
 	if err != nil {
 		wd = "/"
 	}
-	return lookPath(name, wd, fm.variables.Get("PATH"), perm)
+	return lookPath(name, wd, fm.GetVar("PATH"), perm)
 }
 
 func (fm *frame) startProcess(words []string) (*os.Process, error) {
 	return os.StartProcess(words[0], words, &os.ProcAttr{
 		Files: fm.files,
 		// TODO: Only serialize exported variables.
-		Env: serializeEnvEntries(fm.variables),
+		Env: fm.variables.serializeEnvEntries(),
 	})
 }
 
@@ -596,7 +550,7 @@ func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 
 	var lastStatus int
 	for _, value := range values {
-		canSet := fm.variables.Set(varName, value)
+		canSet := fm.SetVar(varName, value)
 		if !canSet {
 			fm.diag(data.VarName, "%v is readonly", varName)
 			// Assigning to a readonly error is a fatal error according to
@@ -889,7 +843,7 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		if !ok {
 			return nil, false
 		}
-		result, err := arith.Eval(exp.expandOneString(), fm.variables)
+		result, err := arith.Eval(exp.expandOneString(), fm)
 		if err != nil {
 			fm.diag(pr, "bad arithmetic expression: %v", err)
 			return nil, false
@@ -1110,7 +1064,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 			}
 			if assignIfUse {
 				if info.normal {
-					canSet := fm.variables.Set(v.Name, arg.expandOneString())
+					canSet := fm.SetVar(v.Name, arg.expandOneString())
 					if !canSet {
 						fm.diag(v, "%v is readonly", v.Name)
 						return nil, false
@@ -1181,16 +1135,4 @@ func (fm *frame) ifs() string {
 		return " \t\n"
 	}
 	return ifs
-}
-
-func cloneSlice[T any](s []T) []T {
-	return append([]T(nil), s...)
-}
-
-func cloneMap[K comparable, V any](m map[K]V) map[K]V {
-	mm := make(map[K]V, len(m))
-	for k, v := range m {
-		mm[k] = v
-	}
-	return mm
 }

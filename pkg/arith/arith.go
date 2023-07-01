@@ -7,8 +7,8 @@ import (
 )
 
 type Variables interface {
-	Get(name string) string
-	Set(name, value string) bool
+	GetVar(name string) string
+	SetVar(name, value string) bool
 }
 
 type SetError struct{ Name string }
@@ -111,7 +111,7 @@ func (p *parser) assign() (int64, error) {
 			}
 			result = binaryOps[op](current, rhs)
 		}
-		ok := p.variables.Set(name, strconv.FormatInt(result, 10))
+		ok := p.variables.SetVar(name, strconv.FormatInt(result, 10))
 		if !ok {
 			return 0, SetError{name}
 		}
@@ -292,7 +292,7 @@ func (p *parser) primary() (int64, error) {
 			return 0, err
 		}
 		newVal := oldVal + int64(preInc+postInc-preDec-postDec)
-		ok := p.variables.Set(name, strconv.FormatInt(newVal, 10))
+		ok := p.variables.SetVar(name, strconv.FormatInt(newVal, 10))
 		if !ok {
 			return 0, SetError{name}
 		}
@@ -324,7 +324,7 @@ func (p *parser) parseIncDec() (inc, dec int) {
 }
 
 func (p *parser) getVar(name string) (int64, error) {
-	value := p.variables.Get(name)
+	value := p.variables.GetVar(name)
 	if value == "" {
 		// Not defined in POSIX, but all of dash, bash and zsh treat unset
 		// and empty variables as 0.

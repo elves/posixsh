@@ -92,7 +92,7 @@ func read(fm *frame, args []string) int {
 		varName = args[0]
 		// TODO: Support multiple arguments:
 	}
-	canSet := fm.variables.Set(varName, line)
+	canSet := fm.SetVar(varName, line)
 	if !canSet {
 		// TODO: Add range information
 		fmt.Fprintf(fm.files[2], "%v is readonly\n", varName)

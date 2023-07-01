@@ -52,6 +52,16 @@ echo should not get here
 ## stdout-json: ""
 ## stderr-regexp: .+
 
+#### Variable assignment error in for command is fatal
+readonly x
+for x in a b; do
+    :
+done
+echo should not get here
+## status: [1, 127]
+## stdout-json: ""
+## stderr-regexp: .+
+
 #### Expansion error is fatal
 echo $(( 1 /*/ 2 ))
 echo should not get here

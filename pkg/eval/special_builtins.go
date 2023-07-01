@@ -176,7 +176,7 @@ func exportOrReadonly(fm *frame, args []string, cmd string, varSet set[string]) 
 		// important in readonly; if we add it to the readonly set first, the
 		// assignment will always fail.
 		if hasValue {
-			canSet := fm.variables.Set(name, value)
+			canSet := fm.SetVar(name, value)
 			if !canSet {
 				fm.diagSpecialCommand("%v is readonly\n", name)
 				return StatusAssignmentError, false
