@@ -774,15 +774,20 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 }
 
 func (fm *frame) expandCompounds(cps []*parse.Compound) ([]string, bool) {
-	var words []string
+	var result []string
 	for _, cp := range cps {
 		exp, ok := fm.compound(cp)
 		if !ok {
 			return nil, false
 		}
-		words = append(words, generateFilenames(exp.expand(fm.ifs()))...)
+		words := exp.expand(fm.ifs())
+		if fm.options.has(noglob) {
+			result = append(result, each(stringifyWord, words)...)
+		} else {
+			result = append(result, generateFilenames(words)...)
+		}
 	}
-	return words, true
+	return result, true
 }
 
 func (fm *frame) compound(cp *parse.Compound) (expander, bool) {

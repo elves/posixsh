@@ -23,7 +23,16 @@ printf ': %s\n' $(echo '*')
 : foo
 ## END
 
-# TODO: Test "set -f"
+#### Pathname expansion is suppressed by the noglob option
+touch foo bar
+set -o noglob
+x='*'
+printf ': %s\n' * $x $(echo '*')
+## STDOUT:
+: *
+: *
+: *
+## END
 
 # More tests for the pattern syntax are found in tests for 2.13 "Pattern
 # matching notation".
