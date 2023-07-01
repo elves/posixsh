@@ -17,5 +17,16 @@ echo v2 > file
 cat file
 ## stdout: v2
 
-# TODO: Test "set -C"
-# TODO: Test ">|"
+#### Output redirection fails if noclobber is in effect and file exists
+echo 'v1 content' > file
+set -o noclobber
+echo v2 > file
+## status: [1, 127]
+## stderr-regexp: .+
+
+#### >| always overwrites
+echo 'v1 content' > file
+set -o noclobber
+echo v2 >| file
+cat file
+## stdout: v2

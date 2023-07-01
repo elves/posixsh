@@ -664,8 +664,13 @@ func (fm *frame) redir(rd *parse.Redir) (int, bool, func() error) {
 	case parse.RedirInput:
 		flag = os.O_RDONLY
 		defaultDst = 0
-	case parse.RedirOutput:
-		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	case parse.RedirOutput, parse.RedirOutputOverwrite:
+		flag = os.O_WRONLY | os.O_CREATE
+		if rd.Mode == parse.RedirOutput && fm.options.has(noclobber) {
+			flag |= os.O_EXCL
+		} else {
+			flag |= os.O_TRUNC
+		}
 		defaultDst = 1
 	case parse.RedirInputOutput:
 		flag = os.O_RDWR | os.O_CREATE

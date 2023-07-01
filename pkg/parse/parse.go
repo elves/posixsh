@@ -492,6 +492,7 @@ const (
 	RedirInvalid RedirMode = iota
 	RedirInput
 	RedirOutput
+	RedirOutputOverwrite
 	RedirInputOutput
 	RedirAppend
 	RedirHeredoc
@@ -499,7 +500,7 @@ const (
 
 const digitSet = "0123456789"
 
-// Redir = `[0-9]*` (">>" | "<>" | ">" | "<" | "<<") w [ "&" w ] Compound
+// Redir = `[0-9]*` (">>" | "<>" | "<<-" | "<<" | ">|" | ">" | "<") w [ "&" w ] Compound
 func (rd *Redir) parse(p *parser, opt nodeOpt) {
 	left := p.consumeWhileIn(digitSet)
 	if left == "" {
@@ -525,6 +526,8 @@ func (rd *Redir) parse(p *parser, opt nodeOpt) {
 		stripLeadingTabs = true
 	case p.maybeMeta("<<"):
 		rd.Mode = RedirHeredoc
+	case p.maybeMeta(">|"):
+		rd.Mode = RedirOutputOverwrite
 	case p.maybeMeta(">"):
 		rd.Mode = RedirOutput
 	case p.maybeMeta("<"):

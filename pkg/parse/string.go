@@ -11,14 +11,15 @@ func _() {
 	_ = x[RedirInvalid-0]
 	_ = x[RedirInput-1]
 	_ = x[RedirOutput-2]
-	_ = x[RedirInputOutput-3]
-	_ = x[RedirAppend-4]
-	_ = x[RedirHeredoc-5]
+	_ = x[RedirOutputOverwrite-3]
+	_ = x[RedirInputOutput-4]
+	_ = x[RedirAppend-5]
+	_ = x[RedirHeredoc-6]
 }
 
-const _RedirMode_name = "RedirInvalidRedirInputRedirOutputRedirInputOutputRedirAppendRedirHeredoc"
+const _RedirMode_name = "RedirInvalidRedirInputRedirOutputRedirOutputOverwriteRedirInputOutputRedirAppendRedirHeredoc"
 
-var _RedirMode_index = [...]uint8{0, 12, 22, 33, 49, 60, 72}
+var _RedirMode_index = [...]uint8{0, 12, 22, 33, 53, 69, 80, 92}
 
 func (i RedirMode) String() string {
 	if i < 0 || i >= RedirMode(len(_RedirMode_index)-1) {
