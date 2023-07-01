@@ -112,7 +112,7 @@ func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
 }
 
 func (ev *Evaler) frame() *frame {
-	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, nil, 0, false}
+	return &frame{ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], 0, 0, 0, 0, nil, 0, false}
 }
 
 type frame struct {
@@ -125,6 +125,7 @@ type frame struct {
 	// diagnostic message to the stderr, ignoring all active redirections. We
 	// save the initial stderr (files[2]) in this field for that purpose.
 	diagFile *os.File
+	options  options
 	// Used for $?.
 	lastPipelineStatus int
 	// Used as the status of simple commands with only assignments.
@@ -168,6 +169,7 @@ func (fm *frame) cloneForSubshell() *frame {
 		cloneMap(fm.functions),
 		cloneSlice(fm.files),
 		fm.diagFile,
+		fm.options,
 		// POSIX doesn't explicitly specify whether subshells inherit $?, but
 		// all of dash, bash, ksh and zsh let subshells inherit $?, so we follow
 		// their behavior.

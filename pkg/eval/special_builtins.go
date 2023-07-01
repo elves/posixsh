@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -156,7 +157,10 @@ func exportOrReadonly(fm *frame, args []string, cmd string, varSet set[string]) 
 		return StatusBadCommandLine, false
 	}
 	if len(args) == 0 {
-		for name := range varSet {
+		// POSIX doesn't require the names to be sorted, but all of dash, bash,
+		// ksh and zsh sort the names.
+		names := sortedNames(varSet)
+		for _, name := range names {
 			value, set := fm.variables.values[name]
 			if set {
 				fmt.Fprintf(fm.files[1], "%v %v=%v\n", cmd, name, quote(value))
@@ -200,15 +204,75 @@ func returnCmd(fm *frame, args []string) (int, bool) {
 	return status, false
 }
 
-// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#setCmd
 func setCmd(fm *frame, args []string) (int, bool) {
-	// TODO: Support outputting parameters.
-	// TODO: Support setting options.
-	if len(args) > 0 && args[0] == "--" {
-		args = args[1:]
+	if len(args) == 0 {
+		// According to POSIX, a call to list variables must truly has no
+		// argument, not even "--": "set --" is instead a call to unset all
+		// positional parameters.
+		printVariables(fm.files[1], fm.variables.values)
+		return 0, true
 	}
+	// The options of set are different from other commands in two ways:
+	//
+	//  - Options may start with + (for turning off an option).
+	//  - -o and +o take an optional argument *in the next argument*.
+	//
+	// POSIX only lists the usage of -o and +o as separate arguments, and the
+	// forms that use them for listing options ("set -o" and "set +o") do not
+	// mix with the form for setting options and positional parameters. We adopt
+	// a similar strategy as bash: parse -o and +o like other options; they mean
+	// "set option" when followed by another argument that is not "--", and mean
+	// "list options" when followed by "--" or end of argument list.
+	for len(args) > 0 {
+		arg := args[0]
+		if arg == "--" {
+			args = args[1:]
+			break
+		} else if arg == "" {
+			// Same as the else branch, but put it here so that we can look at
+			// arg[0].
+			break
+		} else if on, off := arg[0] == '-', arg[0] == '+'; on || off {
+			args = args[1:]
+			for i := 1; i < len(arg); i++ {
+				if arg[i] == 'o' {
+					if len(args) > 0 && args[0] != "--" {
+						// There is an argument after this that is not "--"; use
+						// it as the option name.
+						name := args[0]
+						args = args[1:]
+						if bit, ok := optionByName[name]; ok {
+							fm.options = fm.options.with(bit, on)
+						} else {
+							fm.badCommandLine("unknown option %s", name)
+						}
+					} else {
+						fmt.Fprint(fm.files[1], fm.options.format(off))
+					}
+				} else if bit, ok := optionByLetter[arg[i]]; ok {
+					fm.options = fm.options.with(bit, on)
+				} else {
+					fm.badCommandLine("unknown option %s", arg[i])
+					return StatusBadCommandLine, false
+				}
+			}
+		} else {
+			// Non-option argument; stop parsing. This is consistent with the
+			// use of "BSD" style getopt for parsing options of other commands.
+			break
+		}
+	}
+
 	fm.arguments = append([]string{fm.arguments[0]}, args...)
 	return 0, true
+}
+
+func printVariables(out *os.File, values map[string]string) {
+	// POSIX requires that the names be sorted.
+	names := sortedNames(values)
+	for _, name := range names {
+		fmt.Fprintf(out, "%v=%v\n", name, quote(values[name]))
+	}
 }
 
 func shiftCmd(fm *frame, args []string) (int, bool) {
@@ -296,6 +360,15 @@ func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 
 // The same as parse.normalBarewordStopper.
 const nonBareword = "\r\n;)}&| \t<>(\\'\"$`"
+
+func sortedNames[V any](m map[string]V) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 func quote(s string) string {
 	if !strings.ContainsAny(s, nonBareword) {
