@@ -52,7 +52,7 @@ func (ev *Evaler) Eval(code string) int {
 }
 
 func (ev *Evaler) EvalChunk(n *parse.Chunk) int {
-	status, _ := ev.frame().chunk(n)
+	status, _ := ev.frame().topChunk(n)
 	return status
 }
 
@@ -167,6 +167,23 @@ func (fm *frame) diag(n parse.Node, format string, args ...any) {
 // error. That behavior is outside the scope of this package: evaluation always
 // stops when there is a fatal error, and it's up to the caller of this package
 // to decide whether that causes the process to exit.
+
+// Runs a top-level chunk. The top-level is special in that the verbose option
+// causes it to print every AndOr node before executing.
+func (fm *frame) topChunk(ch *parse.Chunk) (int, bool) {
+	var lastStatus int
+	for _, ao := range ch.AndOrs {
+		if fm.options.has(verbose) {
+			fmt.Fprintln(fm.files[2], strings.TrimRight(ao.Source(), "\n"))
+		}
+		status, ok := fm.andOr(ao)
+		if !ok {
+			return status, false
+		}
+		lastStatus = status
+	}
+	return lastStatus, true
+}
 
 func (fm *frame) chunk(ch *parse.Chunk) (int, bool) {
 	return fm.andOrs(ch.AndOrs)
@@ -413,6 +430,28 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		}
 		// We have already checked that all variables are not readonly.
 		fm.SetVar(name, exp.expandOneString())
+	}
+
+	// POSIX specifies that setting xtrace causes each "command" to print a
+	// "trace" after expansion but before execution, without further details.
+	// All of dash, bash, ksh and zsh interprete "command" as "simple command",
+	// and use a leading + to indicate trace lines, but they don't agree on the
+	// exact format of the trace. For example, bash adds one + for one level of
+	// command substitutions, and zsh includes filenames and line numbers. They
+	// also don't agree on how temporary assignments and redirections should be
+	// printed.
+	//
+	// We mostly follow dash's behavior: one +, print assignments but not
+	// redirections.
+	if fm.options.has(xtrace) {
+		fm.files[2].WriteString("+")
+		for _, assign := range c.Assigns {
+			fmt.Fprintf(fm.files[2], " %v=%v", assign.LHS, quote(fm.GetVar(assign.LHS)))
+		}
+		for _, word := range words {
+			fmt.Fprintf(fm.files[2], " %v", word)
+		}
+		fm.files[2].WriteString("\n")
 	}
 
 	if len(words) == 0 {

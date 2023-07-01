@@ -156,12 +156,13 @@ type parseNode[O any] interface {
 }
 
 func parse[O any, N parseNode[O]](p *parser, n N, opt O) N {
-	n.setBegin(p.pos)
+	n.setBegin(p.recoverPos(p.pos))
 	p.stack = append(p.stack, n)
 
 	n.parse(p, opt)
 
-	n.setEnd(p.pos)
+	n.setEnd(p.recoverPos(p.pos))
+	n.setSource(p.orig[n.Begin():n.End()])
 	p.stack[len(p.stack)-1] = nil
 	p.stack = p.stack[:len(p.stack)-1]
 	if len(p.stack) > 0 && !emptyWhitespaces(n) {

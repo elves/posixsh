@@ -5,9 +5,11 @@ type Node interface {
 	End() int
 	Parent() Node
 	Children() []Node
+	Source() string
 
 	setBegin(int)
 	setEnd(int)
+	setSource(string)
 	setParent(Node)
 	addChild(Node)
 }
@@ -15,18 +17,21 @@ type Node interface {
 type node struct {
 	begin    int
 	end      int
+	source   string
 	parent   Node
 	children []Node
 }
 
-func (n *node) Begin() int       { return n.begin }
-func (n *node) setBegin(i int)   { n.begin = i }
-func (n *node) End() int         { return n.end }
-func (n *node) setEnd(i int)     { n.end = i }
-func (n *node) Parent() Node     { return n.parent }
-func (n *node) setParent(m Node) { n.parent = m }
-func (n *node) Children() []Node { return n.children }
-func (n *node) addChild(m Node)  { n.children = append(n.children, m) }
+func (n *node) Begin() int         { return n.begin }
+func (n *node) setBegin(i int)     { n.begin = i }
+func (n *node) End() int           { return n.end }
+func (n *node) setEnd(i int)       { n.end = i }
+func (n *node) Source() string     { return n.source }
+func (n *node) setSource(s string) { n.source = s }
+func (n *node) Parent() Node       { return n.parent }
+func (n *node) setParent(m Node)   { n.parent = m }
+func (n *node) Children() []Node   { return n.children }
+func (n *node) addChild(m Node)    { n.children = append(n.children, m) }
 
 const (
 	inlineWhitespaceSet = " \t\r"
