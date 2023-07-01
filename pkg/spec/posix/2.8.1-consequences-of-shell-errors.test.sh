@@ -28,14 +28,29 @@ echo should get here
 ## stdout: should get here
 ## stderr-regexp: .+
 
-# TODO:
-# #### Variable assignment error is fatal
-# readonly x=foo
-# x=bar
-# echo should not get here
-# ## status: [1, 127]
-# ## stdout:
-# ## stderr-regexp: .+
+#### Variable assignment error is fatal
+readonly x=foo
+x=bar
+echo should not get here
+## status: [1, 127]
+## stdout-json: ""
+## stderr-regexp: .+
+
+#### Variable assignment error in arithmetic expression is fatal
+readonly x=foo
+: $(( x++ ))
+echo should not get here
+## status: [1, 127]
+## stdout-json: ""
+## stderr-regexp: .+
+
+#### Variable assignment error in ${name:=value} expression is fatal
+readonly x
+: ${x=value}
+echo should not get here
+## status: [1, 127]
+## stdout-json: ""
+## stderr-regexp: .+
 
 #### Expansion error is fatal
 echo $(( 1 /*/ 2 ))
