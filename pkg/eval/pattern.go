@@ -141,14 +141,10 @@ type parsePatternFuncs struct {
 	anyString func()
 }
 
-var (
-	// Pattern to match ASCII character class inside [ ]. The set of supported
-	// classes are from item 6 of section 9.3.5 "RE bracket expression" of
-	// POSIX. These classes are all supported by the regexp package.
-	asciiCharClass = regexp.MustCompile(`^\[:(?:alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit):\]`)
-	// Characters that can be special inside [ ].
-	bracketSpecial = regexp.MustCompile(`[\[\]\-\\^:]`)
-)
+// Pattern to match ASCII character class inside [ ]. The set of supported
+// classes are from item 6 of section 9.3.5 "RE bracket expression" of POSIX.
+// These classes are all supported by the regexp package.
+var asciiCharClass = regexp.MustCompile(`^\[:(?:alnum|alpha|blank|cntrl|digit|graph|lower|print|punct|space|upper|xdigit):\]`)
 
 func parsePattern(w word, f parsePatternFuncs) {
 	literal := func(s string) {
@@ -324,16 +320,21 @@ func convertCharClassToRegexp(w word, i0, j0, iend, jend int) string {
 	}
 	for _, seg := range content {
 		if seg.quoted {
-			// Escape anything that can be special inside
-			// character classes. We can't use
-			// regexp.QuoteMeta here since some characters
-			// like "-" are only special inside character
-			// classes.
-			sb.WriteString(bracketSpecial.ReplaceAllString(seg.text, "\\$1"))
+			sb.WriteString(quoteForBrackets(seg.text))
 		} else {
 			sb.WriteString(seg.text)
 		}
 	}
 	sb.WriteString("]")
 	return sb.String()
+}
+
+// Characters that can be special inside [ ].
+var bracketSpecial = regexp.MustCompile(`[\[\]\-\\^:]`)
+
+// Escapes string so that it represents itself within [ ]. We can't use
+// [regexp.QuoteMeta] here since some characters like "-" are only special
+// inside character classes.
+func quoteForBrackets(s string) string {
+	return bracketSpecial.ReplaceAllString(s, "\\$0")
 }

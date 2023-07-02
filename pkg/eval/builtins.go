@@ -1,11 +1,11 @@
 package eval
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -352,32 +352,66 @@ func pwdCmd(fm *frame, args []string) int {
 	return 0
 }
 
+var escaped = regexp.MustCompile(`\\(.)`)
+
 func readCmd(fm *frame, args []string) int {
-	line := getLine(fm.files[0])
-	varName := "REPLY"
-	if len(args) > 0 {
-		varName = args[0]
-		// TODO: Support multiple arguments:
+	opts, args, err := getopts(args, "r")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
 	}
-	canSet := fm.SetVar(varName, line)
-	if !canSet {
-		// TODO: Add range information
-		fmt.Fprintf(fm.files[2], "%v is readonly\n", varName)
+	raw := opts.has('r')
+	var sb strings.Builder
+	for {
+		line := getLine(fm.files[0])
+		if !raw && strings.HasSuffix(line, `\`) {
+			// Line continuation
+			sb.WriteString(line[:len(line)-1])
+			// Specified by POSIX
+			fm.files[2].WriteString(fm.ps2())
+		} else {
+			sb.WriteString(line)
+			break
+		}
 	}
-	return 0
+	input := sb.String()
+	if !raw {
+		input = escaped.ReplaceAllString(input, "$1")
+	}
+	names := args
+	if len(args) == 0 {
+		names = []string{"REPLY"}
+	}
+	fields := split(input, fm.ifs(), len(names))
+	status := 0
+	for i, name := range names {
+		field := ""
+		if i < len(fields) {
+			field = fields[i]
+		}
+		canSet := fm.SetVar(name, field)
+		if !canSet {
+			// TODO: Add range information
+			fmt.Fprintf(fm.files[2], "%v is readonly\n", name)
+			status = 1
+		}
+	}
+	return status
 }
 
+// Reads a line from an [io.Reader]. We don't use bufio to avoid reading past
+// the newline.
 func getLine(r io.Reader) string {
-	var buf bytes.Buffer
+	var sb strings.Builder
 	for {
 		var buf1 [1]byte
 		nr, err := r.Read(buf1[:])
 		if nr == 0 || err != nil || buf1[0] == '\n' {
 			break
 		}
-		buf.WriteByte(buf1[0])
+		sb.WriteByte(buf1[0])
 	}
-	return buf.String()
+	return sb.String()
 }
 
 func trueCmd(*frame, []string) int { return 0 }

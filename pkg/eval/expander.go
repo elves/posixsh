@@ -3,6 +3,7 @@ package eval
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -100,7 +101,7 @@ func (l literal) expandOneString() string  { return l.s }
 // parsing of glob characters.
 type expanded struct{ s string }
 
-func (e expanded) expand(ifs string) []word { return each(unquotedWord, split(e.s, ifs)) }
+func (e expanded) expand(ifs string) []word { return each(unquotedWord, split(e.s, ifs, -1)) }
 func (e expanded) expandOneWord() word      { return unquotedWord(e.s) }
 func (e expanded) expandOneString() string  { return e.s }
 
@@ -147,7 +148,7 @@ func (a array) expand(ifs string) []word {
 	var words []word
 	for _, arg := range a.elems {
 		if arg != "" {
-			words = append(words, each(unquotedWord, split(arg, ifs))...)
+			words = append(words, each(unquotedWord, split(arg, ifs, -1))...)
 		}
 	}
 	return words
@@ -212,12 +213,8 @@ func appendWord(w1, w2 word) word {
 	return append(w1, w2...)
 }
 
-func split(s, ifs string) []string {
-	// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
-	//
-	// The following implements the algorithm described in clause 3. Clause 1
-	// describes the default behavior, but it's consistent with the more general
-	// clause 3.
+func split(s, ifs string, n int) []string {
+	// Implements section 2.6.5 "Field splitting".
 	//
 	// The algorithm depends on a definition of "character", which is not
 	// explicitly specified in this section. This detail is important when IFS
@@ -232,9 +229,39 @@ func split(s, ifs string) []string {
 		}
 		return []string{s}
 	}
-	// The following implements the algorithm described in clause 3. Clause 1
-	// describes the default behavior, but it's consistent with the more general
-	// clause 3.
+	info := prepareIFS(ifs)
+	// Apply step a.
+	s = strings.Trim(s, info.whitespaces)
+	// Apply step b and c.
+	fields := info.fieldDelim.Split(s, n)
+	if n == -1 && len(fields) > 0 && fields[len(fields)-1] == "" {
+		// If the word ended with a delimiter, don't produce a final empty
+		// field. See posix-ext/2.6.5-field-splitting.test.sh for details.
+		//
+		// This also implements the deletion of words that expand to exactly one
+		// null field (see posix/2.6-word-expansion.test.sh).
+		//
+		// This special casing is not done when n is not -1: the "read" command
+		// uses a positive n and doesn't require this behavior.
+		fields = fields[:len(fields)-1]
+	}
+	return fields
+}
+
+type ifsInfo struct {
+	whitespaces string
+	fieldDelim  *regexp.Regexp
+}
+
+var ifsInfoCache sync.Map
+
+func prepareIFS(ifs string) ifsInfo {
+	if value, ok := ifsInfoCache.Load(ifs); ok {
+		return value.(ifsInfo)
+	}
+	// Extract information from IFS for the algorithm described in clause 3 of
+	// section 2.6.5 "Field splitting". Clause 1 describes the default behavior,
+	// but it's consistent with the more general clause 3.
 	//
 	// The algorithm depends on a definition of "character", which is not
 	// explicitly specified in this section. This detail is important when IFS
@@ -250,40 +277,30 @@ func split(s, ifs string) []string {
 			nonWhitespaceRunes = append(nonWhitespaceRunes, r)
 		}
 	}
+	// For step a: Ignore leading and trailing IFS whitespace.
 	whitespaces := string(whitespaceRunes)
 	nonWhitespaces := string(nonWhitespaceRunes)
 
-	// a. Ignore leading and trailing IFS whitespaces.
-	s = strings.Trim(s, whitespaces)
-
 	delimPatterns := make([]string, 0, 2)
-	// b. Each occurrence of a non-whitespace IFS character, with optional
-	// leading and trailing IFS whitespaces, are considered delimiters.
+	// For step b: Each occurrence of a non-whitespace IFS character, with
+	// optional leading and trailing IFS whitespaces, are considered delimiters.
 	if nonWhitespaces != "" {
-		p := "[" + regexp.QuoteMeta(nonWhitespaces) + "]"
+		p := "[" + quoteForBrackets(nonWhitespaces) + "]"
 		if whitespaces != "" {
-			whitePattern := "[" + regexp.QuoteMeta(whitespaces) + "]*"
+			// whitespaces can only contain ' ', '\t' or '\n', which can all
+			// appear directly inside [ ].
+			whitePattern := "[" + whitespaces + "]*"
 			p = whitePattern + p + whitePattern
 		}
 		delimPatterns = append(delimPatterns, p)
 	}
-	// c. Non-zero-length IFS white space shall delimit a field.
+	// For step c: Non-zero-length IFS white space shall delimit a field.
 	if whitespaces != "" {
-		p := "[" + regexp.QuoteMeta(whitespaces) + "]+"
+		p := "[" + whitespaces + "]+"
 		delimPatterns = append(delimPatterns, p)
 	}
-
-	// Apply splitting from rule b and c.
-	//
-	// TODO: Cache the compiled regexp.
-	fields := regexp.MustCompile(strings.Join(delimPatterns, "|")).Split(s, -1)
-	if len(fields) > 0 && fields[len(fields)-1] == "" {
-		// If the word ended with a delimiter, don't produce a final empty
-		// field. See posix-ext/2.6.5-field-splitting.test.sh for details.
-		//
-		// This also implements the deletion of words that expand to exactly one
-		// null field (see posix/2.6-word-expansion.test.sh).
-		fields = fields[:len(fields)-1]
-	}
-	return fields
+	info := ifsInfo{
+		whitespaces, regexp.MustCompile(strings.Join(delimPatterns, "|"))}
+	ifsInfoCache.Store(ifs, info)
+	return info
 }

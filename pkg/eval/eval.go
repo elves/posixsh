@@ -1243,10 +1243,19 @@ func (fm *frame) complainBadVar(name, what string, argNode *parse.Compound) {
 }
 
 func (fm *frame) ifs() string {
-	ifs, set := fm.variables.values["IFS"]
+	// Default value specified in section 2.6.5 "Field splitting".
+	return fm.getVarOr("IFS", " \t\n")
+}
+
+func (fm *frame) ps2() string {
+	// Default value specified in section 2.5.4 "Shell variables".
+	return fm.getVarOr("PS2", "> ")
+}
+
+func (fm *frame) getVarOr(name, fallback string) string {
+	value, set := fm.variables.values[name]
 	if !set {
-		// https://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_06_05
-		return " \t\n"
+		return fallback
 	}
-	return ifs
+	return value
 }

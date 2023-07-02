@@ -41,7 +41,7 @@ func (rs regexpOrString) match(s string) bool {
 	return rs.s == s
 }
 
-//go:embed oil posix posix-ext
+//go:embed impl oil posix posix-ext
 var specFiles embed.FS
 
 var specs = parseSpecFilesInFS(specFiles)
