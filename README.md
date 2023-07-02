@@ -30,7 +30,7 @@ The following features are currently missing:
 * [ ] `hash`
 * [ ] `$LINENO`
 * [ ] `$PPID`
-* [ ] Signal handling.
+* [ ] Signal handling
     * [ ] All of 2.11 "Signals and error handling"
     * [ ] `trap`
 * [ ] Interactive features
@@ -44,8 +44,7 @@ The following features are currently missing:
 
 Some implemented features are incomplete:
 
-- In `<<-` heredocs, the stripping of leading tabs do not work correctly inside
-  expansions. Example:
+- In `<<-` heredocs, leading tabs in expansions are not stripped. Example:
 
   ```sh
   cat <<-EOF
