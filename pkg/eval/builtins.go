@@ -120,7 +120,7 @@ func cdCmd(fm *frame, args []string) int {
 		return StatusBadCommandLine
 	}
 	if len(args) == 0 {
-		return cdInner(fm, fm.GetVar("HOME"))
+		return cdInner(fm, fm.getVar("HOME"))
 	} else if len(args) > 1 {
 		fm.badCommandLine("cd accepts at most one argument")
 		return StatusBadCommandLine
@@ -133,7 +133,7 @@ func cdCmd(fm *frame, args []string) int {
 	}
 	newWd := args[0]
 	if newWd == "-" {
-		status := cdInner(fm, fm.GetVar("OLDPWD"))
+		status := cdInner(fm, fm.getVar("OLDPWD"))
 		if status == 0 {
 			fmt.Fprintln(fm.files[1], fm.wd)
 		}
@@ -141,7 +141,7 @@ func cdCmd(fm *frame, args []string) int {
 	}
 	if !filepath.IsAbs(newWd) {
 		if first, _, _ := strings.Cut(newWd, "/"); first != "." && first != ".." {
-			for _, cdpath := range filepath.SplitList(fm.GetVar("CDPATH")) {
+			for _, cdpath := range filepath.SplitList(fm.getVar("CDPATH")) {
 				// See if we can change to cdpath + newWd. This duplicates some
 				// code from below.
 				tryWd := cdpath + string(filepath.Separator) + newWd
@@ -187,7 +187,7 @@ func cdNoCheck(fm *frame, newWd string) int {
 	}
 	// POSIX doesn't specify whether cd should respect the readonly attribute of
 	// $OLDPWD and $PWD; bash, dash and zsh do, ksh doesn't. We follow ksh.
-	fm.variables.values["OLDPWD"] = fm.GetVar("PWD")
+	fm.variables.values["OLDPWD"] = fm.getVar("PWD")
 	fm.variables.values["PWD"] = newWd
 	fm.wd = newWd
 	return 0
@@ -201,7 +201,7 @@ func commandCmd(fm *frame, args []string) int {
 		fm.badCommandLine("%v", err)
 		return StatusBadCommandLine
 	}
-	path := fm.GetVar("PATH")
+	path := fm.getVar("PATH")
 	if opts.has('p') {
 		path = defaultPath
 	}
@@ -389,10 +389,10 @@ func readCmd(fm *frame, args []string) int {
 		if i < len(fields) {
 			field = fields[i]
 		}
-		canSet := fm.SetVar(name, field)
-		if !canSet {
+		err := fm.SetVar(name, field)
+		if err != nil {
 			// TODO: Add range information
-			fmt.Fprintf(fm.files[2], "%v is readonly\n", name)
+			fmt.Fprintln(fm.files[2], err)
 			status = 1
 		}
 	}
@@ -419,7 +419,7 @@ func trueCmd(*frame, []string) int { return 0 }
 func typeCmd(fm *frame, args []string) int {
 	ret := 0
 	for _, arg := range args {
-		status := identifyCommandType(fm, arg, fm.GetVar("PATH"))
+		status := identifyCommandType(fm, arg, fm.getVar("PATH"))
 		if status != 0 {
 			ret = status
 		}

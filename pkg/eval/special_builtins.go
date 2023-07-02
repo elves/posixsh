@@ -87,7 +87,7 @@ func dotCmd(fm *frame, args []string) (int, bool) {
 		fm.badCommandLine(". requires at least one argument")
 		return StatusBadCommandLine, false
 	}
-	path, ok, _ := lookPath(args[0], fm.wd, fm.GetVar("PATH"), 0)
+	path, ok, _ := lookPath(args[0], fm.wd, fm.getVar("PATH"), 0)
 	if !ok {
 		fm.diagSpecialCommand("not found: %v\n", args[0])
 		return StatusFileToSourceNotFound, false
@@ -176,9 +176,9 @@ func exportOrReadonly(fm *frame, args []string, cmd string, varSet set[string]) 
 		// important in readonly; if we add it to the readonly set first, the
 		// assignment will always fail.
 		if hasValue {
-			canSet := fm.SetVar(name, value)
-			if !canSet {
-				fm.diagSpecialCommand("%v is readonly\n", name)
+			err := fm.SetVar(name, value)
+			if err != nil {
+				fm.diagSpecialCommand("%v", err)
 				return StatusAssignmentError, false
 			}
 		}

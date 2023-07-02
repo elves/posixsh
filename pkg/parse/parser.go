@@ -86,9 +86,10 @@ func (p *parser) source(n Node) string {
 }
 
 func (p *parser) errorf(format string, a ...interface{}) {
-	line, col := lineCol(p.orig, p.recoverPos(p.pos))
+	pos := p.recoverPos(p.pos)
+	line, col := lineCol(p.orig, pos)
 	p.err.Errors = append(p.err.Errors,
-		ErrorEntry{line, col, fmt.Sprintf(format, a...)})
+		ErrorEntry{pos, line, col, fmt.Sprintf(format, a...)})
 }
 
 func (p *parser) consume(i int) string {

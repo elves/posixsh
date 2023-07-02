@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -63,6 +62,11 @@ func TestSpecs(t *testing.T) {
 			stdout, stderr := read()
 
 			if len(spec.wantStatus) > 0 {
+				if strings.HasPrefix(spec.suite, "oil/") {
+					// Relax status constraint for tests in oil/: as long as we
+					// are testing a non-zero status, admit any non-zero status.
+					relaxStatus(&spec)
+				}
 				if !matchAny(status, spec.wantStatus, interval.contains) {
 					t.Errorf("got status %v, want any of %v", status, spec.wantStatus)
 				}
@@ -80,25 +84,20 @@ func TestSpecs(t *testing.T) {
 	}
 }
 
-var caseRegexp = regexp.MustCompile(`(?m)^case `)
-
 func skipReason(s spec) string {
 	if !strings.HasPrefix(s.suite, "oil/") {
 		return ""
 	}
-	if caseRegexp.MatchString(s.code) {
-		return "code uses 'case'"
+	if strings.Contains(s.code, "typeset") {
+		return "code uses typeset"
 	}
-	if strings.HasPrefix(s.suite, "oil/") && strings.Contains(s.code, "should not get here") {
-		return "code tests error handling behavior"
+	if strings.Contains(s.code, "$?") {
+		return "code tests exact value of $?"
 	}
 	switch s.suite {
 	case "oil/comments.test.sh", "oil/quote.test.sh":
 		return ""
 	case "oil/arith.test.sh":
-		if len(s.wantStatus) > 0 && !reflect.DeepEqual(s.wantStatus, []int{0}) {
-			return "code tests error handling behavior"
-		}
 		if s.name == "Integer Overflow" {
 			return "overflow should be OK instead of BUG"
 		}
@@ -131,6 +130,18 @@ func outputPipe() (*os.File, func() string) {
 	return w, func() string {
 		w.Close()
 		return <-ch
+	}
+}
+
+func relaxStatus(s *spec) {
+	hasNonZero := false
+	for _, status := range s.wantStatus {
+		if status != (interval{0, 0}) {
+			hasNonZero = true
+		}
+	}
+	if hasNonZero {
+		s.wantStatus = append(s.wantStatus, interval{1, 127})
 	}
 }
 

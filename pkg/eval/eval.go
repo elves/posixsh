@@ -478,7 +478,7 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	if fm.options.has(xtrace) {
 		fm.files[2].WriteString("+")
 		for _, assign := range c.Assigns {
-			fmt.Fprintf(fm.files[2], " %v=%v", assign.LHS, quote(fm.GetVar(assign.LHS)))
+			fmt.Fprintf(fm.files[2], " %v=%v", assign.LHS, quote(fm.getVar(assign.LHS)))
 		}
 		for _, word := range words {
 			fmt.Fprintf(fm.files[2], " %v", word)
@@ -529,7 +529,7 @@ func (fm *frame) callCommand(words []string, c *parse.Command, callFn bool) (int
 	}
 
 	// External commands?
-	path, status := fm.lookExecutable(words[0], fm.GetVar("PATH"))
+	path, status := fm.lookExecutable(words[0], fm.getVar("PATH"))
 	if status != 0 {
 		return status, true
 	}
@@ -635,9 +635,9 @@ func (fm *frame) runFor(c *parse.Command, data parse.For) (int, bool) {
 
 	var lastStatus int
 	for _, value := range values {
-		canSet := fm.SetVar(varName, value)
-		if !canSet {
-			fm.diag(data.VarName, "%v is readonly", varName)
+		err := fm.SetVar(varName, value)
+		if err != nil {
+			fm.diag(data.VarName, "%v", err)
 			// Assigning to a readonly error is a fatal error according to
 			// POSIX.
 			return StatusAssignmentError, false
@@ -944,7 +944,11 @@ func (fm *frame) primary(pr *parse.Primary) (expander, bool) {
 		}
 		result, err := arith.Eval(exp.expandOneString(), fm)
 		if err != nil {
-			fm.diag(pr, "bad arithmetic expression: %v", err)
+			if errors.As(err, &arith.VarError{}) {
+				fm.diag(pr, "%v", err)
+			} else {
+				fm.diag(pr, "bad arithmetic expression: %v", err)
+			}
 			return nil, false
 		}
 		// Arithmetic expressions undergo word splitting.
@@ -1065,7 +1069,7 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 	}
 
 	if !info.set && fm.options.has(nounset) && !hasSubstitutionOp(v) {
-		fm.diag(v, "parameter %v is unset", name)
+		fm.diag(v, "%v is unset", name)
 		return nil, false
 	}
 
@@ -1168,9 +1172,9 @@ func (fm *frame) variable(v *parse.Variable) (expander, bool) {
 			}
 			if assignIfUse {
 				if info.normal {
-					canSet := fm.SetVar(v.Name, arg.expandOneString())
-					if !canSet {
-						fm.diag(v, "%v is readonly", v.Name)
+					err := fm.SetVar(v.Name, arg.expandOneString())
+					if err != nil {
+						fm.diag(v, "%v", err)
 						return nil, false
 					}
 				} else {
@@ -1250,6 +1254,10 @@ func (fm *frame) ifs() string {
 func (fm *frame) ps2() string {
 	// Default value specified in section 2.5.4 "Shell variables".
 	return fm.getVarOr("PS2", "> ")
+}
+
+func (fm *frame) getVar(name string) string {
+	return fm.getVarOr(name, "")
 }
 
 func (fm *frame) getVarOr(name, fallback string) string {

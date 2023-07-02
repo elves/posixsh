@@ -7,13 +7,15 @@ import (
 )
 
 type Variables interface {
-	GetVar(name string) string
-	SetVar(name, value string) bool
+	GetVar(name string) (string, error)
+	SetVar(name, value string) error
 }
 
-type SetError struct{ Name string }
+// VarError wraps an error returned from Variables.GetVar or Variables.SetVar.
+type VarError struct{ e error }
 
-func (err SetError) Error() string { return "cannot set " + err.Name }
+func (err VarError) Error() string { return err.e.Error() }
+func (err VarError) Unwrap() error { return err.e }
 
 func Eval(s string, variables Variables) (int64, error) {
 	tokens, starts := lex(s)
@@ -111,9 +113,9 @@ func (p *parser) assign() (int64, error) {
 			}
 			result = binaryOps[op](current, rhs)
 		}
-		ok := p.variables.SetVar(name, strconv.FormatInt(result, 10))
-		if !ok {
-			return 0, SetError{name}
+		err = p.variables.SetVar(name, strconv.FormatInt(result, 10))
+		if err != nil {
+			return 0, VarError{err}
 		}
 		return result, nil
 	}
@@ -292,9 +294,9 @@ func (p *parser) primary() (int64, error) {
 			return 0, err
 		}
 		newVal := oldVal + int64(preInc+postInc-preDec-postDec)
-		ok := p.variables.SetVar(name, strconv.FormatInt(newVal, 10))
-		if !ok {
-			return 0, SetError{name}
+		err = p.variables.SetVar(name, strconv.FormatInt(newVal, 10))
+		if err != nil {
+			return 0, VarError{err}
 		}
 		// The value of an expression with both prefix increment/decrement
 		// operators and postfix increment/decrement operators is not
@@ -324,7 +326,10 @@ func (p *parser) parseIncDec() (inc, dec int) {
 }
 
 func (p *parser) getVar(name string) (int64, error) {
-	value := p.variables.GetVar(name)
+	value, err := p.variables.GetVar(name)
+	if err != nil {
+		return 0, VarError{err}
+	}
 	if value == "" {
 		// Not defined in POSIX, but all of dash, bash and zsh treat unset
 		// and empty variables as 0.

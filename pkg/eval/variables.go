@@ -50,17 +50,29 @@ func (v variables) clone() variables {
 // These are methods on [*frame] rather than [variables] because the behavior
 // of setting variable depends on the [allexport] option.
 
-func (fm *frame) GetVar(name string) string {
-	return fm.variables.values[name]
+type unsetError struct{ name string }
+
+func (err unsetError) Error() string { return err.name + " is unset" }
+
+func (fm *frame) GetVar(name string) (string, error) {
+	value, ok := fm.variables.values[name]
+	if !ok && fm.options.has(nounset) {
+		return value, unsetError{name}
+	}
+	return value, nil
 }
 
-func (fm *frame) SetVar(name, value string) bool {
+type readonlyError struct{ name string }
+
+func (err readonlyError) Error() string { return err.name + " is readonly" }
+
+func (fm *frame) SetVar(name, value string) error {
 	if fm.variables.readonly.has(name) {
-		return false
+		return readonlyError{name}
 	}
 	if fm.options.has(allexport) {
 		fm.variables.exported.add(name)
 	}
 	fm.variables.values[name] = value
-	return true
+	return nil
 }

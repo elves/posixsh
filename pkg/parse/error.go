@@ -22,7 +22,8 @@ func (err Error) Error() string {
 }
 
 type ErrorEntry struct {
-	Line    int
-	Col     int
-	Message string
+	Position int
+	Line     int
+	Col      int
+	Message  string
 }
