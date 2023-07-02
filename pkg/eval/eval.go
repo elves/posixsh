@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -68,7 +67,7 @@ func (ev *Evaler) frame() *frame {
 	return &frame{
 		ev.files, ev.arguments, ev.variables, ev.functions, ev.aliases,
 		ev.files[2], wd,
-		0, 0, 0, 0, nil, 0, false}
+		0, 0, 0, nil, 0, nil, 0, false}
 }
 
 type frame struct {
@@ -90,6 +89,9 @@ type frame struct {
 	lastPipelineStatus int
 	// Used as the status of simple commands with only assignments.
 	lastCmdSubstStatus int
+	// Set during a command call. Useful for diagnostic messages written from
+	// (special) builtins.
+	currentCommand *parse.Command
 	// The following two fields are used to implement break/continue inside
 	// for/while/until loops:
 	//
@@ -136,7 +138,7 @@ func (fm *frame) cloneForSubshell() *frame {
 		// all of dash, bash, ksh and zsh let subshells inherit $?, so we follow
 		// their behavior.
 		fm.lastPipelineStatus,
-		0, 0, nil, 0, false,
+		0, nil, 0, nil, 0, false,
 	}
 }
 
@@ -494,18 +496,31 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		return fm.lastCmdSubstStatus, true
 	}
 
+	return fm.callCommand(words, c, true)
+}
+
+func (fm *frame) callCommand(words []string, c *parse.Command, callFn bool) (int, bool) {
+	prevCommand := fm.currentCommand
+	fm.currentCommand = c
+	defer func() {
+		fm.currentCommand = prevCommand
+	}()
+
 	// The order of special builtin > function > non-special builtin > external
-	// is specified in 2.9.1 Simple Commands.
+	// is specified in 2.9.1 Simple Commands. The function step can be skipped
+	// for the "command" builtin.
 
 	if builtin, ok := specialBuiltins[words[0]]; ok {
 		return builtin(fm, words[1:])
 	}
 
 	// Functions?
-	if fn, ok := fm.functions[words[0]]; ok {
-		return fm.callFuncLike(words[1:], func() (int, bool) {
-			return fm.command(fn)
-		})
+	if callFn {
+		if fn, ok := fm.functions[words[0]]; ok {
+			return fm.callFuncLike(words[1:], func() (int, bool) {
+				return fm.command(fn)
+			})
+		}
 	}
 
 	// Builtins?
@@ -514,15 +529,9 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 
 	// External commands?
-	path, ok, exists := fm.lookPath(words[0], 0o111)
-	if !ok {
-		if exists {
-			fm.diag(c, "command not executable: %v", words[0])
-			return StatusCommandNotExecutable, true
-		} else {
-			fm.diag(c, "command not found: %v", words[0])
-			return StatusCommandNotFound, true
-		}
+	path, status := fm.lookExecutable(words[0], fm.GetVar("PATH"))
+	if status != 0 {
+		return status, true
 	}
 	words[0] = path
 
@@ -553,18 +562,6 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	}
 }
 
-func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
-	return lookPath(name, fm.wd, fm.GetVar("PATH"), perm)
-}
-
-func (fm *frame) startProcess(words []string) (*os.Process, error) {
-	return os.StartProcess(words[0], words, &os.ProcAttr{
-		Dir:   fm.wd,
-		Env:   fm.variables.serializeEnvEntries(),
-		Files: fm.files,
-	})
-}
-
 func (fm *frame) callFuncLike(args []string, f func() (int, bool)) (int, bool) {
 	oldArgs := fm.arguments
 	// POSIX specifies that $0 is unchanged during a function call, but
@@ -579,6 +576,30 @@ func (fm *frame) callFuncLike(args []string, f func() (int, bool)) (int, bool) {
 		return status, true
 	}
 	return status, ok
+}
+
+// Looks for executable. Handles error reporting, using fm.currentCommand for
+// range information in diagnostics.
+func (fm *frame) lookExecutable(name, path string) (string, int) {
+	path, ok, exists := lookPath(name, fm.wd, path, 0o111)
+	if ok {
+		return path, 0
+	}
+	if exists {
+		fm.diag(fm.currentCommand, "command not executable: %v", name)
+		return "", StatusCommandNotExecutable
+	} else {
+		fm.diag(fm.currentCommand, "command not found: %v", name)
+		return "", StatusCommandNotFound
+	}
+}
+
+func (fm *frame) startProcess(words []string) (*os.Process, error) {
+	return os.StartProcess(words[0], words, &os.ProcAttr{
+		Dir:   fm.wd,
+		Env:   fm.variables.serializeEnvEntries(),
+		Files: fm.files,
+	})
 }
 
 func (fm *frame) runFnDef(c *parse.Command, data parse.FnDef) (int, bool) {

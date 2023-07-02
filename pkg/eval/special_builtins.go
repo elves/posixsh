@@ -87,7 +87,7 @@ func dotCmd(fm *frame, args []string) (int, bool) {
 		fm.badCommandLine(". requires at least one argument")
 		return StatusBadCommandLine, false
 	}
-	path, ok, _ := fm.lookPath(args[0], 0)
+	path, ok, _ := lookPath(args[0], fm.wd, fm.GetVar("PATH"), 0)
 	if !ok {
 		fm.diagSpecialCommand("not found: %v\n", args[0])
 		return StatusFileToSourceNotFound, false

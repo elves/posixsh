@@ -10,9 +10,10 @@ import (
 )
 
 var builtins = map[string]func(*frame, []string) int{
-	"alias":   aliasCmd,
-	"bg":      bgCmd,
-	"cd":      cdCmd,
+	"alias": aliasCmd,
+	"bg":    bgCmd,
+	"cd":    cdCmd,
+	// command is added in init
 	"false":   falseCmd,
 	"fc":      fcCmd,
 	"fg":      fgCmd,
@@ -21,14 +22,20 @@ var builtins = map[string]func(*frame, []string) int{
 	"jobs":    jobsCmd,
 	// kill and newgrp are omitted; they are usually available as external
 	// commands.
-	"pwd":     pwdCmd,
-	"read":    readCmd,
-	"true":    trueCmd,
-	"type":    typeCmd,
+	"pwd":  pwdCmd,
+	"read": readCmd,
+	"true": trueCmd,
+	// type is added in init
 	"ulimit":  ulimitCmd,
 	"umask":   umaskCmd,
 	"unalias": unaliasCmd,
 	"wait":    waitCmd,
+}
+
+func init() {
+	// Some commands are added in the map here to avoid dependency cycles.
+	builtins["command"] = commandCmd
+	builtins["type"] = typeCmd
 }
 
 // Limitation: the alias substitution mechanism specified by POSIX requires the
@@ -183,6 +190,109 @@ func cdNoCheck(fm *frame, newWd string) int {
 	return 0
 }
 
+const defaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+func commandCmd(fm *frame, args []string) int {
+	opts, args, err := getopts(args, "pvV")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	path := fm.GetVar("PATH")
+	if opts.has('p') {
+		path = defaultPath
+	}
+	// POSIX only requires that "command -v" and "command -V" support exactly
+	// one argument, but all of bash, ksh and zsh (but not dash) supports any
+	// number of arguments and loop through them; we follow their behavior.
+	if opts.has('V') {
+		// Identify the command. Almost identical to the type command, except
+		// for the support of -p.
+		ret := 0
+		for _, arg := range args {
+			status := identifyCommandType(fm, arg, path)
+			if status != 0 {
+				ret = status
+			}
+		}
+		return ret
+	} else if opts.has('v') {
+		// Expand the command. Similar to -V with different output format.
+		ret := 0
+		for _, arg := range args {
+			status := expandCommand(fm, arg, path)
+			if status != 0 {
+				ret = status
+			}
+		}
+		return ret
+	}
+	// Execute the command. POSIX's specification requires at least one argument
+	// (the command name), but all of dash, bash, ksh and zsh do nothing when
+	// given no arguments.
+	if len(args) == 0 {
+		return 0
+	}
+	status, _ := fm.callCommand(args, fm.currentCommand, false)
+	return status
+}
+
+func identifyCommandType(fm *frame, name, path string) int {
+	var what string
+	if isShellKeyword(name) {
+		what = "a keyword"
+	} else if def, ok := fm.aliases[name]; ok {
+		what = "an alias for " + def
+	} else if _, ok := specialBuiltins[name]; ok {
+		what = "a special builtin"
+	} else if _, ok := fm.functions[name]; ok {
+		what = "a function"
+	} else if _, ok := builtins[name]; ok {
+		what = "a builtin"
+	} else {
+		path, status := fm.lookExecutable(name, path)
+		if status == 0 {
+			what = path
+		} else {
+			return status
+		}
+	}
+	fmt.Fprintf(fm.files[1], "%v is %v\n", name, what)
+	return 0
+}
+
+func expandCommand(fm *frame, name, path string) int {
+	var what string
+	if isShellKeyword(name) {
+		what = name
+	} else if def, ok := fm.aliases[name]; ok {
+		what = def
+	} else if _, ok := specialBuiltins[name]; ok {
+		what = name
+	} else if _, ok := fm.functions[name]; ok {
+		what = name
+	} else if _, ok := builtins[name]; ok {
+		what = name
+	} else {
+		path, status := fm.lookExecutable(name, path)
+		if status == 0 {
+			what = path
+		} else {
+			return status
+		}
+	}
+	fmt.Fprintln(fm.files[1], what)
+	return 0
+}
+
+func isShellKeyword(name string) bool {
+	switch name {
+	case "for", "do", "done", "case", "esac", "if", "then", "elif", "else", "fi", "while", "until", "!", "{", "}":
+		return true
+	}
+	return false
+}
+
 func falseCmd(*frame, []string) int { return 1 }
 
 func fcCmd(fm *frame, args []string) int {
@@ -270,8 +380,14 @@ func getLine(r io.Reader) string {
 func trueCmd(*frame, []string) int { return 0 }
 
 func typeCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
+	ret := 0
+	for _, arg := range args {
+		status := identifyCommandType(fm, arg, fm.GetVar("PATH"))
+		if status != 0 {
+			ret = status
+		}
+	}
+	return ret
 }
 
 func ulimitCmd(fm *frame, args []string) int {
