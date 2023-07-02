@@ -8,6 +8,8 @@
 
 # $PATH is tested in 2.9.1-simple-commands.test.sh
 
-# TODO: $PPID
+#### $PPID
+echo $PPID
+## stdout-regexp: \d+\n
 
-# TODO: $PWD
+# $PWD is tested in cd.test.sh.

@@ -29,7 +29,6 @@ The following features are currently missing:
 * [ ] `getopts`
 * [ ] `hash`
 * [ ] `$LINENO`
-* [ ] `$PPID`
 * [ ] Signal handling
     * [ ] All of 2.11 "Signals and error handling"
     * [ ] `trap`

@@ -2,6 +2,7 @@ package eval
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -25,11 +26,8 @@ func initVariablesFromEnv(entries []string) variables {
 		v.values[name] = value
 		v.exported.add(name)
 	}
-	wd, err := os.Getwd()
-	if err == nil {
-		v.values["PWD"] = wd
-		v.exported.add("PWD")
-	}
+	v.values["PPID"] = strconv.Itoa(os.Getppid())
+	v.exported.add("PWD")
 	return v
 }
 
