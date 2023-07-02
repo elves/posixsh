@@ -7,11 +7,13 @@ Files in `spec/oil` are derived from the
 [Oil](https://github.com/oilshell/oil), licensed under Apache License 2.0. See
 [spec/oil/LICENSE](spec/oil/LICENSE).
 
-## Limitations
+## Status and limitations
 
-The following features are not yet implemented:
+The majority of POSIX shell features are implemented.
 
-* [ ] Closing FDs in redirections (`<&-`).
+The following features are currently missing:
+
+* [ ] Closing FDs in redirections (`<&-`)
 * [ ] Background jobs and related features
     * [ ] All of 2.9.3 "Async lists"
     * [ ] `$!`
@@ -22,7 +24,7 @@ The following features are not yet implemented:
     * [ ] `set -o monitor` (`set -m`)
     * [ ] `set -o notify` (`set -n`)
 * [ ] `set -o errexit` (`set -e`)
-* [ ] `set -o noexec` (`set -n`).
+* [ ] `set -o noexec` (`set -n`)
 * [ ] `exec`
 * [ ] `getopts`
 * [ ] `hash`
