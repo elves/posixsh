@@ -427,6 +427,7 @@ func typeCmd(fm *frame, args []string) int {
 	return ret
 }
 
+// Limitation: The effect of ulimit is global to the entire process.
 func ulimitCmd(fm *frame, args []string) int {
 	// The -f flag is a no-op
 	_, args, err := getopts(args, "f")
@@ -467,9 +468,92 @@ func ulimitCmd(fm *frame, args []string) int {
 	}
 }
 
+var permGroupRegexp = regexp.MustCompile(`^([ugo])([-+=])([rwx]*)$`)
+
 func umaskCmd(fm *frame, args []string) int {
-	// TODO
+	opts, args, err := getopts(args, "S")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	if len(args) > 1 {
+		fm.badCommandLine("umask accepts at most one argument")
+		return StatusBadCommandLine
+	}
+	umask := unix.Umask(0)
+	unix.Umask(umask)
+	if len(args) == 0 {
+		if opts.has('S') {
+			fmt.Fprintf(fm.files[1], "u=%s,g=%s,o=%s\n",
+				rwx(^umask>>6), rwx(^umask>>3), rwx(^umask))
+		} else {
+			fmt.Fprintf(fm.files[1], "%04o\n", umask)
+		}
+		return 0
+	}
+	if newmask, err := strconv.ParseInt(args[0], 8, 0); err == nil {
+		unix.Umask(int(newmask))
+		return 0
+	}
+	newmask := umask
+	fields := strings.Split(args[0], ",")
+	for _, field := range fields {
+		groups := permGroupRegexp.FindStringSubmatch(field)
+		if groups == nil {
+			fm.badCommandLine("cannot parse umask %s", args[0])
+			return StatusBadCommandLine
+		}
+		lshift := 0
+		switch groups[1] {
+		case "u":
+			lshift = 6
+		case "g":
+			lshift = 3
+		}
+		perm := parseRwx(groups[3])
+		switch groups[2] {
+		case "=":
+			// Set target bits to perm. Do this by first setting it to 111, then
+			// unset perm bits.
+			newmask = (newmask | (7 << lshift)) &^ (perm << lshift)
+		case "+":
+			// Unset perm bits
+			newmask = newmask &^ (perm << lshift)
+		case "-":
+			// Set perm bits
+			newmask = newmask | (perm << lshift)
+		}
+	}
+	unix.Umask(newmask)
 	return 0
+}
+
+var permSymbols = []struct {
+	letter byte
+	bit    int
+}{{'r', 4}, {'w', 2}, {'x', 1}}
+
+func rwx(i int) string {
+	var sb strings.Builder
+	for _, sym := range permSymbols {
+		if i&sym.bit != 0 {
+			sb.WriteByte(sym.letter)
+		}
+	}
+	return sb.String()
+}
+
+func parseRwx(s string) int {
+	mask := 0
+	for _, b := range []byte(s) {
+		for _, sym := range permSymbols {
+			if b == sym.letter {
+				mask |= sym.bit
+				break
+			}
+		}
+	}
+	return mask
 }
 
 func unaliasCmd(fm *frame, args []string) int {
