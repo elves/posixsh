@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -20,8 +19,8 @@ var builtins = map[string]func(*frame, []string) int{
 	"getopts": getoptsCmd,
 	"hash":    hashCmd,
 	"jobs":    jobsCmd,
-	"kill":    killCmd,
-	"newgrp":  newgrpCmd,
+	// kill and newgrp are omitted; they are usually available as external
+	// commands.
 	"pwd":     pwdCmd,
 	"read":    readCmd,
 	"true":    trueCmd,
@@ -52,6 +51,18 @@ func aliasCmd(fm *frame, args []string) int {
 	for _, arg := range args {
 		name, def, hasDef := strings.Cut(arg, "=")
 		if hasDef {
+			// POSIX doesn't specify the set of supported alias names, but since
+			// only barewords are eligible for alias expansion, we only admit
+			// names that consist of barewords and don't look like assignments.
+			//
+			// Since we parse glob characters as barewords too, we also support
+			// them as alias names - for example, "alias '*'=echo" is supported.
+			// This is consistent with dash, bash and zsh, but not with ksh.
+			if strings.ContainsAny(name, nonBareword+"=") {
+				fmt.Fprintf(fm.files[2], "alias name with metacharacters or '=' are not supported: %v", name)
+				status = 1
+				continue
+			}
 			if aliasSupported(def) {
 				fm.aliases[name] = def
 			} else {
@@ -83,31 +94,6 @@ func printAlias(fm *frame, name string) {
 	// It would make more sense to prefix the output with "alias" so that it
 	// could be executed as code, but this format is specified by POSIX.
 	fmt.Fprintf(fm.files[1], "%v=%v\n", quote(name), quote(fm.aliases[name]))
-}
-
-func aliasSupported(def string) bool {
-	words, _ := parseAliasDef(def)
-	if len(words) == 0 {
-		return true
-	}
-	if strings.Contains(words[0], "=") {
-		return false
-	}
-	for _, word := range words {
-		if strings.ContainsAny(word, nonBareword) {
-			return false
-		}
-	}
-	return true
-}
-
-var tabsOrSpaces = regexp.MustCompile(`[ \t]+`)
-
-func parseAliasDef(def string) ([]string, bool) {
-	trimmed := strings.TrimRight(def, " \t")
-	expandNext := trimmed != def
-	def = strings.TrimLeft(trimmed, " \t")
-	return tabsOrSpaces.Split(def, -1), expandNext
 }
 
 func bgCmd(fm *frame, args []string) int {
@@ -220,16 +206,6 @@ func hashCmd(fm *frame, args []string) int {
 }
 
 func jobsCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
-}
-
-func killCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
-}
-
-func newgrpCmd(fm *frame, args []string) int {
 	// TODO
 	return 0
 }

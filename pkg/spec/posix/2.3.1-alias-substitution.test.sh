@@ -28,3 +28,17 @@ alias echo='echo '
 alias world='world peace'
 echo world
 ## stdout: world peace
+
+#### Only barewords are eligible for alias expansion
+alias echo='echo aliased'
+'echo' line1
+\echo line2
+x=echo
+$x line3
+`printf echo` line4
+## STDOUT:
+line1
+line2
+line3
+line4
+## END

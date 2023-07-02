@@ -379,15 +379,22 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	// 2.9.1 Simple Commands. POSIX allows for redirections and assignments to
 	// swap position if the command is a special builtin, but we don't do that.
 
-	words, ok := fm.expandCompounds(data.Words)
+	// POSIX requires alias substitution to happen after tokenizing but before
+	// further parsing; this behavior is followed by all of dash, bash, ksh and
+	// zsh.
+	//
+	// However, we parse most things statically and don't feed the expanded
+	// alias back to the parser, and the alias command explicitly only supports
+	// aliases that consist of barewords. For this subset of aliases we do
+	// support, we can match the POSIX behavior by expanding aliases as early as
+	// possible, so that they can - for example - shadow special builtins.
+	head, tail := expandAlias(data.Words, fm.aliases)
+
+	tailWords, ok := fm.expandCompounds(tail)
 	if !ok {
 		return StatusExpansionError, false
 	}
-	// POSIX requires alias substitution to happen after tokenizing but before
-	// further parsing. We parse most things statically and don't implement
-	// that. Instead, we try to approximate it as much as possible by expanding
-	// aliases here.
-	words = fm.expandAlias(words)
+	words := append(head, tailWords...)
 
 	isSpecial := len(words) > 0 && specialBuiltins[words[0]] != nil
 
@@ -544,31 +551,6 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		}
 		return StatusWaitOther, true
 	}
-}
-
-func (fm *frame) expandAlias(words []string) []string {
-	active := make(set[string])
-	var expand func([]string) []string
-	expand = func(words []string) []string {
-		if len(words) == 0 || active.has(words[0]) {
-			return words
-		}
-		head := words[0]
-		def, ok := fm.aliases[head]
-		if !ok {
-			return words
-		}
-		newHead, next := parseAliasDef(def)
-		active.add(head)
-		defer active.del(head)
-		newHead = expand(newHead)
-		rest := words[1:]
-		if next {
-			rest = expand(rest)
-		}
-		return append(cloneSlice(newHead), rest...)
-	}
-	return expand(words)
 }
 
 func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {
