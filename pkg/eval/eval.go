@@ -19,10 +19,11 @@ import (
 )
 
 type Evaler struct {
+	files     []*os.File
 	arguments []string
 	variables variables
 	functions map[string]*parse.Command
-	files     []*os.File
+	aliases   map[string]string
 }
 
 var StdFiles = []*os.File{os.Stdin, os.Stdout, os.Stderr}
@@ -35,10 +36,11 @@ func NewEvaler(args []string, files []*os.File) *Evaler {
 		panic("files must have at least 3 elements")
 	}
 	return &Evaler{
+		files,
 		args,
 		initVariablesFromEnv(os.Environ()),
 		make(map[string]*parse.Command),
-		files,
+		make(map[string]string),
 	}
 }
 
@@ -64,15 +66,17 @@ func (ev *Evaler) frame() *frame {
 	}
 	ev.variables.values["PWD"] = wd
 	return &frame{
-		ev.arguments, ev.variables, ev.functions, ev.files, ev.files[2], wd,
+		ev.files, ev.arguments, ev.variables, ev.functions, ev.aliases,
+		ev.files[2], wd,
 		0, 0, 0, 0, nil, 0, false}
 }
 
 type frame struct {
+	files     []*os.File
 	arguments []string
 	variables variables
 	functions map[string]*parse.Command
-	files     []*os.File
+	aliases   map[string]string
 	// POSIX requires all cases except "special built-in utility error" and
 	// "other utility (not a special builtin-in error)" to print a shell
 	// diagnostic message to the stderr, ignoring all active redirections. We
@@ -120,10 +124,11 @@ type loopAbort struct {
 func (fm *frame) cloneForSubshell() *frame {
 	// TODO: Optimize with copy on write
 	return &frame{
+		cloneSlice(fm.files),
 		cloneSlice(fm.arguments),
 		fm.variables.clone(),
 		cloneMap(fm.functions),
-		cloneSlice(fm.files),
+		cloneMap(fm.aliases),
 		fm.diagFile,
 		fm.wd,
 		fm.options,
@@ -378,6 +383,12 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 	if !ok {
 		return StatusExpansionError, false
 	}
+	// POSIX requires alias substitution to happen after tokenizing but before
+	// further parsing. We parse most things statically and don't implement
+	// that. Instead, we try to approximate it as much as possible by expanding
+	// aliases here.
+	words = fm.expandAlias(words)
+
 	isSpecial := len(words) > 0 && specialBuiltins[words[0]] != nil
 
 	// Redirections are only permanent when we're running "exec".
@@ -533,6 +544,31 @@ func (fm *frame) runSimple(c *parse.Command, data parse.Simple) (int, bool) {
 		}
 		return StatusWaitOther, true
 	}
+}
+
+func (fm *frame) expandAlias(words []string) []string {
+	active := make(set[string])
+	var expand func([]string) []string
+	expand = func(words []string) []string {
+		if len(words) == 0 || active.has(words[0]) {
+			return words
+		}
+		head := words[0]
+		def, ok := fm.aliases[head]
+		if !ok {
+			return words
+		}
+		newHead, next := parseAliasDef(def)
+		active.add(head)
+		defer active.del(head)
+		newHead = expand(newHead)
+		rest := words[1:]
+		if next {
+			rest = expand(rest)
+		}
+		return append(cloneSlice(newHead), rest...)
+	}
+	return expand(words)
 }
 
 func (fm *frame) lookPath(name string, perm fs.FileMode) (string, bool, bool) {

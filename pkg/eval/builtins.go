@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -31,9 +32,82 @@ var builtins = map[string]func(*frame, []string) int{
 	"wait":    waitCmd,
 }
 
+// Limitation: the alias substitution mechanism specified by POSIX requires the
+// results to participate in the grammar of the command. For example, the
+// following is valid:
+//
+//	alias x='echo x; echo'
+//	x bar # equivalent to: echo x; echo bar
+//
+// This is particularly difficult for this implementation as most of the parsing
+// happens statically without the knowledge of the alias table. Instead, we only
+// definitions that consist of barewords and returns an error when there is
+// anything more complex.
 func aliasCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
+	if len(args) == 0 {
+		printAliases(fm)
+		return 0
+	}
+	status := 0
+	for _, arg := range args {
+		name, def, hasDef := strings.Cut(arg, "=")
+		if hasDef {
+			if aliasSupported(def) {
+				fm.aliases[name] = def
+			} else {
+				fmt.Fprintf(fm.files[2], "alias definitions with metacharacters are not supported: %v", def)
+				status = 1
+			}
+		} else {
+			if _, ok := fm.aliases[name]; ok {
+				printAlias(fm, name)
+			} else {
+				fmt.Fprintf(fm.files[2], "no alias definitions for %v", name)
+				status = 1
+			}
+		}
+	}
+	return status
+}
+
+func printAliases(fm *frame) {
+	// POSIX doesn't requires the names to be sorted, but we do that to make the
+	// output more readable.
+	names := sortedNames(fm.aliases)
+	for _, name := range names {
+		printAlias(fm, name)
+	}
+}
+
+func printAlias(fm *frame, name string) {
+	// It would make more sense to prefix the output with "alias" so that it
+	// could be executed as code, but this format is specified by POSIX.
+	fmt.Fprintf(fm.files[1], "%v=%v\n", quote(name), quote(fm.aliases[name]))
+}
+
+func aliasSupported(def string) bool {
+	words, _ := parseAliasDef(def)
+	if len(words) == 0 {
+		return true
+	}
+	if strings.Contains(words[0], "=") {
+		return false
+	}
+	for _, word := range words {
+		if strings.ContainsAny(word, nonBareword) {
+			return false
+		}
+	}
+	return true
+}
+
+var tabsOrSpaces = regexp.MustCompile(`[ \t]+`)
+
+func parseAliasDef(def string) ([]string, bool) {
+	trimmed := strings.TrimRight(def, " \t")
+	expandNext := trimmed != def
+	def = strings.TrimLeft(trimmed, " \t")
+	return tabsOrSpaces.Split(def, -1), expandNext
 }
 
 func bgCmd(fm *frame, args []string) int {
@@ -235,8 +309,26 @@ func umaskCmd(fm *frame, args []string) int {
 }
 
 func unaliasCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
+	status := 0
+	opts, args, err := getopts(args, "a")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	for _, name := range args {
+		if _, ok := fm.aliases[name]; ok {
+			delete(fm.aliases, name)
+		} else {
+			// It would make more sense for this to not error for consistency
+			// with unset, but this behavior is specified by POSIX.
+			fmt.Fprintf(fm.files[2], "no alias definitions for %v", name)
+			status = 1
+		}
+	}
+	if opts.has('a') {
+		clearMap(fm.aliases)
+	}
+	return status
 }
 
 func waitCmd(fm *frame, args []string) int {

@@ -13,6 +13,7 @@ func each[X any, Y any](f func(X) Y, xs []X) []Y {
 type set[T comparable] map[T]struct{}
 
 func (s set[T]) add(v T) { s[v] = struct{}{} }
+func (s set[T]) del(v T) { delete(s, v) }
 
 func (s set[T]) has(v T) bool {
 	_, ok := s[v]
@@ -29,6 +30,12 @@ func cloneMap[K comparable, V any](m map[K]V) map[K]V {
 		mm[k] = v
 	}
 	return mm
+}
+
+func clearMap[K comparable, V any](m map[K]V) {
+	for k := range m {
+		delete(m, k)
+	}
 }
 
 func sortedNames[V any](m map[string]V) []string {
