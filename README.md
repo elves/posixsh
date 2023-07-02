@@ -13,7 +13,7 @@ The majority of POSIX shell features are implemented.
 
 The following features are currently missing:
 
-* [ ] Closing FDs in redirections (`<&-`)
+* [ ] Closing FDs in redirections (`<&-`, 2.7.5, 2.7.6)
 * [ ] Background jobs and related features
     * [ ] All of 2.9.3 "Async lists"
     * [ ] `$!`
@@ -28,22 +28,22 @@ The following features are currently missing:
 * [ ] `exec`
 * [ ] `getopts`
 * [ ] `hash`
-* [ ] `$LINENO`
+* [ ] `$LINENO` (2.5.3)
 * [ ] Signal handling
     * [ ] All of 2.11 "Signals and error handling"
     * [ ] `trap`
 * [ ] Interactive features
-    * [ ] `$ENV`
-    * [ ] `$PS1`
-    * [ ] `$PS2`
-    * [ ] `$PS4`
+    * [ ] `$ENV` (2.5.3)
+    * [ ] `$PS1` (2.5.3)
+    * [ ] `$PS2` (2.5.3)
+    * [ ] `$PS4` (2.5.3)
     * [ ] `fc`
     * [ ] `set -o ignoreeof`
     * [ ] `set -o nolog`.
 
 Some implemented features are incomplete:
 
-- In `<<-` heredocs, leading tabs in expansions are not stripped. Example:
+- In `<<-` heredocs, leading tabs in expansions are not stripped (2.7.4). Example:
 
   ```sh
   cat <<-EOF
@@ -55,7 +55,7 @@ Some implemented features are incomplete:
   This should print an empty line followed by a line of just `bar`, but
   currently this implementation has a tab before the `bar`.
 
-- Argument of variable expansions may not contain whitespaces. Example:
+- Argument of variable expansions may not contain whitespaces (2.6.2). Example:
 
   ```sh
   echo ${x=foo  bar}
