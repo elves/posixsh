@@ -56,7 +56,6 @@ read a < file
 printf ': %s\n' $a
 ## stdout: : fooba\r
 ## stderr-json: "more>"
-## END
 
 #### read -r doesn't interprete backslashes
 printf 'foo\\\nb\\a\\\\r' > file

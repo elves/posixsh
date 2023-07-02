@@ -107,7 +107,7 @@ case $x in
 bar) true ;;
 foo) false ;;
 esac
-# status: 1
+## status: 1
 
 # TODO: More status tests with $?
 

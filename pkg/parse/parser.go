@@ -69,6 +69,10 @@ func (p *parser) recoverPos(pos int) int {
 	return pos + 2*sort.SearchInts(p.lineCont, pos+1)
 }
 
+func lineCol(s string, pos int) (int, int) {
+	return 1 + strings.Count(s[:pos], "\n"), 1 + pos - strings.LastIndex(s[:pos], "\n")
+}
+
 func (p *parser) rest() string {
 	return p.text[p.pos:]
 }
@@ -82,8 +86,9 @@ func (p *parser) source(n Node) string {
 }
 
 func (p *parser) errorf(format string, a ...interface{}) {
+	line, col := lineCol(p.orig, p.recoverPos(p.pos))
 	p.err.Errors = append(p.err.Errors,
-		ErrorEntry{p.recoverPos(p.pos), fmt.Sprintf(format, a...)})
+		ErrorEntry{line, col, fmt.Sprintf(format, a...)})
 }
 
 func (p *parser) consume(i int) string {

@@ -96,7 +96,7 @@ esac
 * foo
 * foo
 * foobaz
-foo[h-z]
+fooba[h-z]
 ## END
 
 #### ASCII character class with [[:class]]
@@ -104,15 +104,15 @@ touch bar bas ba0 ba_
 printf ': %s\n' ba[[:alpha:]]
 
 x=foobar y=foobas z=fooba0
-printf '* %s\n' ${x%ba[[:alpha]]} ${y%ba[[:alpha]]} ${z%ba[[:alpha]]}
+printf '* %s\n' ${x%ba[[:alpha:]]} ${y%ba[[:alpha:]]} ${z%ba[[:alpha:]]}
 
 case foobar in
-fooba[[:digit]]) echo 'fooba[[:digit]]' ;;
-fooba[[:alpha]]) echo 'fooba[[:alpha]]' ;;
+fooba[[:digit:]]) echo 'fooba[[:digit:]]' ;;
+fooba[[:alpha:]]) echo 'fooba[[:alpha:]]' ;;
 esac
 ## STDOUT:
 : bar
-: baz
+: bas
 * foo
 * foo
 * fooba0

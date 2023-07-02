@@ -250,8 +250,8 @@ func parseCase(p *parser, opt nodeOpt) Case {
 	if !p.maybeWord("in", opt) {
 		p.errorf(`expect keyword "in"`)
 	}
-	p.whitespaceOrSemicolon()
 	for {
+		p.whitespaceOrSemicolon()
 		if p.maybeMeta("(") {
 			p.inlineWhitespace()
 		}
@@ -292,6 +292,11 @@ func parseCase(p *parser, opt nodeOpt) Case {
 		}
 		if !seenDoubleSemicolon {
 			p.errorf(`expect ";;" or "esac"`)
+			break
+		}
+		p.whitespaceOrSemicolon()
+		if p.maybeWord("esac", opt) {
+			p.whitespaceOrSemicolon()
 			break
 		}
 	}

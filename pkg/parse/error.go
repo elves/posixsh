@@ -16,12 +16,13 @@ func (err Error) Error() string {
 		if i > 0 {
 			b.WriteString("; ")
 		}
-		fmt.Fprintf(&b, "%v: %v", e.Position, e.Message)
+		fmt.Fprintf(&b, "%v:%v: %v", e.Line, e.Col, e.Message)
 	}
 	return b.String()
 }
 
 type ErrorEntry struct {
-	Position int
-	Message  string
+	Line    int
+	Col     int
+	Message string
 }

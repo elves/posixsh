@@ -83,6 +83,9 @@ func TestSpecs(t *testing.T) {
 var caseRegexp = regexp.MustCompile(`(?m)^case `)
 
 func skipReason(s spec) string {
+	if !strings.HasPrefix(s.suite, "oil/") {
+		return ""
+	}
 	if caseRegexp.MatchString(s.code) {
 		return "code uses 'case'"
 	}
@@ -104,10 +107,7 @@ func skipReason(s spec) string {
 		}
 		return ""
 	default:
-		if strings.HasPrefix(s.suite, "oil/") {
-			return "suite is disabled"
-		}
-		return ""
+		return "suite is disabled"
 	}
 }
 
