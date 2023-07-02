@@ -350,7 +350,7 @@ func parseOneInt(fm *frame, args []string, fallback int) (int, bool) {
 	case 1:
 		n, err := strconv.Atoi(args[0])
 		if err != nil {
-			fm.badCommandLine("argument must be number, got %q", args[0])
+			fm.badCommandLine("argument must be integer, got %q", args[0])
 			return 0, false
 		}
 		return n, true

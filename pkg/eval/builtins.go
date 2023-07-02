@@ -6,7 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 var builtins = map[string]func(*frame, []string) int{
@@ -391,8 +394,43 @@ func typeCmd(fm *frame, args []string) int {
 }
 
 func ulimitCmd(fm *frame, args []string) int {
-	// TODO
-	return 0
+	// The -f flag is a no-op
+	_, args, err := getopts(args, "f")
+	if err != nil {
+		fm.badCommandLine("%v", err)
+		return StatusBadCommandLine
+	}
+	switch len(args) {
+	case 0:
+		var lim unix.Rlimit
+		err := unix.Getrlimit(unix.RLIMIT_FSIZE, &lim)
+		if err != nil {
+			fmt.Fprintln(fm.files[2], "cannot get limit:", err)
+			return 2
+		}
+		if lim.Cur == unix.RLIM_INFINITY {
+			fmt.Fprintln(fm.files[1], "unlimited")
+		} else {
+			fmt.Fprintln(fm.files[1], lim.Cur/512)
+		}
+		return 0
+	case 1:
+		n, err := strconv.ParseUint(args[0], 0, 64)
+		if err != nil {
+			fm.badCommandLine("argument must be number, got %q", args[0])
+			return StatusBadCommandLine
+		}
+		bytes := n * 512
+		err = unix.Setrlimit(unix.RLIMIT_FSIZE, &unix.Rlimit{Cur: bytes, Max: bytes})
+		if err != nil {
+			fmt.Fprintln(fm.files[2], "cannot set limit:", err)
+			return 2
+		}
+		return 0
+	default:
+		fm.badCommandLine("at most 1 argument accepted, got %v", len(args))
+		return StatusBadCommandLine
+	}
 }
 
 func umaskCmd(fm *frame, args []string) int {
